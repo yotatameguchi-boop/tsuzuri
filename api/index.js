@@ -1,10 +1,14 @@
 /* Tsuzuri のサーバー。Vercel ではすべてのURLがここに来て（静的ファイルを除く）、中で振り分ける。 */
-import { load, save, putMedia, allowedType, readLocalMedia } from '../lib/store.js';
-import { isWriter, checkPassword, passwordConfigured, issueCookie, clearCookie } from '../lib/auth.js';
+import { getDoc, mutate, allowedType, presignMedia, putLocalMedia, readLocalMedia, useBlob, MEDIA_MAX } from '../lib/store.js';
+import {
+  currentUser, issueCookie, clearCookie, hashPassword, verifyPassword, checkNewAccount, checkPassword,
+  setupKeyConfigured, checkSetupKey, makeInvite, findInvite, newId, publicUser,
+} from '../lib/auth.js';
 import { homePage, postPage, notFoundPage, sitemap, feed, published } from '../lib/pages.js';
 
-const MAX_JSON = 2 * 1024 * 1024;
-const MAX_MEDIA = 4 * 1024 * 1024; // Vercel の関数が受け取れる本文の上限（約4.5MB）に合わせる
+const PAGE_TAG = 'tsuzuri-pages';
+const SLUG = /^[A-Za-z0-9._~-]{1,80}$/;
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 function origin(req) {
   if (process.env.SITE_URL) return process.env.SITE_URL.replace(/\/$/, '');
@@ -17,9 +21,23 @@ function send(res, status, body, type, extra = {}) {
   res.end(body);
 }
 const json = (res, status, obj, extra) => send(res, status, JSON.stringify(obj), 'application/json; charset=utf-8', { 'Cache-Control': 'no-store', ...extra });
-const html = (res, status, body) => send(res, status, body, 'text/html; charset=utf-8', {
-  'Cache-Control': status === 200 ? 'public, max-age=0, s-maxage=30, stale-while-revalidate=600' : 'public, max-age=0, s-maxage=10',
-});
+const fail = (status, error, message) => ({ abort: true, status, body: { error, message } });
+
+/* 読者向けのページは CDN に長く置き、記事が変わったら消す（だから公開した瞬間に反映される） */
+async function page(res, status, body, type = 'text/html; charset=utf-8') {
+  if (process.env.VERCEL) {
+    try { const { addCacheTag } = await import('@vercel/functions'); await addCacheTag(PAGE_TAG); } catch {}
+  }
+  send(res, status, body, type, {
+    'Cache-Control': status === 200 ? 'public, max-age=0, s-maxage=86400, stale-while-revalidate=604800' : 'public, max-age=0, s-maxage=60',
+    'Vercel-Cache-Tag': PAGE_TAG,
+  });
+}
+async function purgePages() {
+  if (!process.env.VERCEL) return;
+  try { const { dangerouslyDeleteByTag } = await import('@vercel/functions'); await dangerouslyDeleteByTag(PAGE_TAG); }
+  catch (e) { console.error('purge failed', e); }
+}
 
 function readBody(req, limit) {
   return new Promise((resolve, reject) => {
@@ -34,99 +52,266 @@ function readBody(req, limit) {
     req.on('error', reject);
   });
 }
+const readJson = async (req, limit = 64 * 1024) => JSON.parse((await readBody(req, limit)).toString() || '{}');
 
-/* 書く人だけが送れる要求か（別サイトからの送信を防ぐ） */
+/* ほかのサイトから送られてきた書き込みを断る */
 function sameSite(req) {
   const o = req.headers.origin;
   if (!o) return true;
   try { return new URL(o).host === (req.headers['x-forwarded-host'] || req.headers.host); } catch { return false; }
 }
-
-const SLUG = /^[A-Za-z0-9._~-]+$/;
-
-function validData(d) {
-  if (!d || typeof d !== 'object' || !Array.isArray(d.posts) || typeof d.site !== 'object') return false;
-  const seen = new Set();
-  for (const p of d.posts) {
-    if (!p || typeof p.slug !== 'string' || !SLUG.test(p.slug) || seen.has(p.slug)) return false;
-    if (typeof p.title !== 'string' || typeof p.body !== 'string') return false;
-    seen.add(p.slug);
-  }
-  return true;
-}
+const slowFail = () => new Promise(r => setTimeout(r, 800));
+const canEdit = (user, post) => user.role === 'admin' || (post.author && post.author === user.id);
+const activeAdmins = doc => doc.users.filter(u => u.role === 'admin' && !u.disabled);
 
 export default async function handler(req, res) {
   const url = new URL(req.url, 'http://x');
   const pathname = url.searchParams.get('__p') ?? url.pathname;
   const method = req.method;
   try {
-    /* ---- API ---- */
-    if (pathname === '/api/me') return json(res, 200, { writer: isWriter(req), passwordConfigured: passwordConfigured() });
+    if (pathname.startsWith('/api/')) {
+      if (method !== 'GET' && !sameSite(req)) return json(res, 403, { error: 'forbidden' });
+      const { data: users } = await getDoc('users');
+      const me = currentUser(req, users);
+      const run = async (doc, fn) => {
+        const r = await mutate(doc, fn);
+        if (r && r.abort) return json(res, r.status, r.body);
+        if (doc === 'content') await purgePages();
+        return r;
+      };
 
-    if (pathname === '/api/login' && method === 'POST') {
-      if (!sameSite(req)) return json(res, 403, { error: 'forbidden' });
-      if (!passwordConfigured()) return json(res, 503, { error: 'no_password', message: 'サーバーに合言葉が設定されていません' });
-      const body = JSON.parse((await readBody(req, 4096)).toString() || '{}');
-      if (!checkPassword(body.password)) {
-        await new Promise(r => setTimeout(r, 800));
-        return json(res, 401, { error: 'wrong', message: '合言葉がちがいます' });
+      /* ---- 自分 ---- */
+      if (pathname === '/api/me') {
+        return json(res, 200, { user: me ? publicUser(me) : null, setupNeeded: users.users.length === 0, setupKeyConfigured: setupKeyConfigured() });
       }
-      return json(res, 200, { ok: true }, { 'Set-Cookie': issueCookie() });
-    }
-    if (pathname === '/api/logout' && method === 'POST') return json(res, 200, { ok: true }, { 'Set-Cookie': clearCookie() });
 
-    if (pathname === '/api/content') {
-      if (!isWriter(req)) return json(res, 401, { error: 'login_required' });
-      if (method === 'GET') return json(res, 200, await load({ fresh: true }));
-      if (method === 'PUT') {
-        if (!sameSite(req)) return json(res, 403, { error: 'forbidden' });
-        const body = JSON.parse((await readBody(req, MAX_JSON)).toString());
-        if (!validData(body.data)) return json(res, 400, { error: 'invalid', message: '記事データの形が正しくありません' });
-        const cur = await load({ fresh: true });
-        if ((body.rev ?? -1) !== cur.rev) return json(res, 409, { error: 'conflict', message: 'ほかの画面で先に保存されています', rev: cur.rev });
-        const next = { ...body.data, rev: cur.rev + 1, savedAt: new Date().toISOString() };
-        await save(next);
-        return json(res, 200, { ok: true, rev: next.rev });
+      if (pathname === '/api/setup' && method === 'POST') {
+        const b = await readJson(req);
+        if (!checkSetupKey(b.setupKey)) { await slowFail(); return json(res, 401, { error: 'wrong', message: 'サイトの合言葉がちがいます' }); }
+        let created;
+        await run('users', doc => {
+          if (doc.users.length) return fail(409, 'exists', '管理者はもう作られています。ログインしてください');
+          const err = checkNewAccount(b, doc.users);
+          if (err) return fail(400, 'invalid', err);
+          created = { id: newId('u'), loginId: b.loginId, name: b.name.trim(), role: 'admin', hash: hashPassword(b.password), ses: 0, created: new Date().toISOString() };
+          doc.users.push(created);
+        });
+        if (res.headersSent) return;
+        /* それまでの記事（書いた人が決まっていない記事）は、最初の管理者のものにする */
+        await run('content', doc => { for (const p of doc.posts) if (!p.author) { p.author = created.id; p.authorName = created.name; } });
+        if (res.headersSent) return;
+        return json(res, 200, { user: publicUser(created) }, { 'Set-Cookie': issueCookie(created) });
       }
-      return json(res, 405, { error: 'method' });
-    }
 
-    if (pathname === '/api/upload' && method === 'POST') {
-      if (!isWriter(req)) return json(res, 401, { error: 'login_required' });
-      if (!sameSite(req)) return json(res, 403, { error: 'forbidden' });
-      const type = (req.headers['content-type'] || '').split(';')[0];
-      if (!allowedType(type)) return json(res, 415, { error: 'type', message: '画像（jpg・png・webp・gif）か動画（mp4・webm）を選んでください' });
-      const buf = await readBody(req, MAX_MEDIA);
-      return json(res, 200, { url: await putMedia(buf, type) });
-    }
+      if (pathname === '/api/login' && method === 'POST') {
+        const b = await readJson(req);
+        const u = users.users.find(x => x.loginId === String(b.loginId || '').trim().toLowerCase());
+        if (!u || u.disabled || !verifyPassword(b.password, u.hash)) {
+          await slowFail();
+          return json(res, 401, { error: 'wrong', message: 'ログインIDかパスワードがちがいます' });
+        }
+        return json(res, 200, { user: publicUser(u) }, { 'Set-Cookie': issueCookie(u) });
+      }
+      if (pathname === '/api/logout' && method === 'POST') return json(res, 200, { ok: true }, { 'Set-Cookie': clearCookie() });
 
-    if (pathname.startsWith('/api/')) return json(res, 404, { error: 'not_found' });
+      if (pathname === '/api/invite-info' && method === 'GET') {
+        const inv = findInvite(users, url.searchParams.get('token'));
+        if (!inv) return json(res, 404, { error: 'invite', message: 'このリンクは使えません（期限切れか、使用済みです）' });
+        const u = inv.resetFor && users.users.find(x => x.id === inv.resetFor);
+        return json(res, 200, inv.resetFor ? { kind: 'reset', name: u ? u.name : '', loginId: u ? u.loginId : '' } : { kind: 'join', role: inv.role });
+      }
+
+      if (pathname === '/api/accept' && method === 'POST') {
+        const b = await readJson(req);
+        let created;
+        await run('users', doc => {
+          const inv = findInvite(doc, b.token);
+          if (!inv) return fail(400, 'invite', 'この招待リンクは使えません（期限切れか、使用済みです）');
+          if (inv.resetFor) {
+            const u = doc.users.find(x => x.id === inv.resetFor);
+            if (!u) return fail(400, 'invite', 'このリンクは使えません');
+            const err = checkPassword(b.password);
+            if (err) return fail(400, 'invalid', err);
+            u.hash = hashPassword(b.password);
+            u.ses = (u.ses || 0) + 1;
+            u.disabled = false;
+            doc.invites = doc.invites.filter(i => i !== inv);
+            created = u;
+            return;
+          }
+          const err = checkNewAccount({ ...b, loginId: String(b.loginId || '').trim().toLowerCase() }, doc.users);
+          if (err) return fail(400, 'invalid', err);
+          created = { id: newId('u'), loginId: String(b.loginId).trim().toLowerCase(), name: b.name.trim(), role: inv.role, hash: hashPassword(b.password), ses: 0, created: new Date().toISOString() };
+          doc.users.push(created);
+          doc.invites = doc.invites.filter(i => i !== inv);
+        });
+        if (res.headersSent) return;
+        return json(res, 200, { user: publicUser(created) }, { 'Set-Cookie': issueCookie(created) });
+      }
+
+      if (!me) return json(res, 401, { error: 'login_required', message: 'ログインしてください' });
+
+      if (pathname === '/api/account' && method === 'POST') {
+        const b = await readJson(req);
+        let updated;
+        await run('users', doc => {
+          const u = doc.users.find(x => x.id === me.id);
+          if (b.name !== undefined) {
+            if (typeof b.name !== 'string' || !b.name.trim() || b.name.length > 40) return fail(400, 'invalid', '名前を1〜40文字で入れてください');
+            u.name = b.name.trim();
+          }
+          if (b.newPassword !== undefined) {
+            if (!verifyPassword(b.currentPassword, u.hash)) return fail(401, 'wrong', '今のパスワードがちがいます');
+            const err = checkPassword(b.newPassword);
+            if (err) return fail(400, 'invalid', err);
+            u.hash = hashPassword(b.newPassword);
+            u.ses = (u.ses || 0) + 1;
+          }
+          updated = u;
+        });
+        if (res.headersSent) return;
+        if (b.name !== undefined) await run('content', doc => { for (const p of doc.posts) if (p.author === me.id) p.authorName = updated.name; });
+        if (res.headersSent) return;
+        return json(res, 200, { user: publicUser(updated) }, { 'Set-Cookie': issueCookie(updated) });
+      }
+
+      /* ---- 記事 ---- */
+      if (pathname === '/api/content' && method === 'GET') {
+        const { data } = await getDoc('content');
+        return json(res, 200, data);
+      }
+
+      const pm = pathname.match(/^\/api\/posts\/([A-Za-z0-9_-]{1,40})$/);
+      if (pm && (method === 'PUT' || method === 'DELETE')) {
+        const id = pm[1];
+        const b = await readJson(req, 2 * 1024 * 1024);
+        let saved = null;
+        await run('content', doc => {
+          const cur = doc.posts.find(p => p.id === id);
+          if (cur && !canEdit(me, cur)) return fail(403, 'forbidden', `この記事は${cur.authorName || 'ほかの人'}さんの記事なので、変えられません`);
+          if (cur && b.baseRev !== cur.rev) return { abort: true, status: 409, body: { error: 'conflict', message: 'ほかの画面で先に保存されています', post: cur } };
+          if (!cur && b.baseRev) return fail(404, 'gone', 'この記事は削除されています');
+          if (method === 'DELETE') {
+            if (!cur) return fail(404, 'gone', 'この記事は削除されています');
+            doc.posts = doc.posts.filter(p => p !== cur);
+            return;
+          }
+          const p = b.post || {};
+          if (!SLUG.test(String(p.slug || ''))) return fail(400, 'invalid', '記事のURLは半角英数とハイフンにしてください');
+          if (doc.posts.some(o => o.id !== id && o.slug === p.slug)) return fail(400, 'invalid', 'そのURLはほかの記事で使われています');
+          if (typeof p.title !== 'string' || p.title.length > 200 || typeof p.body !== 'string') return fail(400, 'invalid', 'タイトルか本文の形が正しくありません');
+          if (p.date && !DATE.test(p.date)) return fail(400, 'invalid', '日付の形が正しくありません');
+          const next = {
+            id, slug: p.slug, title: p.title, body: p.body, date: p.date || new Date().toISOString().slice(0, 10), draft: !!p.draft,
+            author: cur ? cur.author : me.id, authorName: cur ? cur.authorName : me.name,
+            rev: (cur ? cur.rev : 0) + 1, updated: new Date().toISOString().slice(0, 10),
+          };
+          if (cur) Object.assign(cur, next); else doc.posts.push(next);
+          saved = next;
+        });
+        if (res.headersSent) return;
+        return json(res, 200, { ok: true, post: saved });
+      }
+
+      if (pathname === '/api/site' && method === 'PUT') {
+        if (me.role !== 'admin') return json(res, 403, { error: 'forbidden', message: 'サイトの設定は管理者だけが変えられます' });
+        const b = await readJson(req);
+        const name = String(b.name || '').trim(), tagline = String(b.tagline || '').trim();
+        if (!name || name.length > 60 || tagline.length > 200) return json(res, 400, { error: 'invalid', message: 'サイト名は1〜60文字、説明は200文字までです' });
+        await run('content', doc => { doc.site = { ...doc.site, name, tagline }; });
+        if (res.headersSent) return;
+        return json(res, 200, { ok: true });
+      }
+
+      /* ---- 画像・動画 ---- */
+      if (pathname === '/api/upload-url' && method === 'POST') {
+        const b = await readJson(req);
+        if (!allowedType(b.type)) return json(res, 415, { error: 'type', message: '画像（jpg・png・webp・gif）か動画（mp4・webm・mov）を選んでください' });
+        if (!(b.size > 0) || b.size > MEDIA_MAX) return json(res, 413, { error: 'too_large', message: 'ファイルは100MBまでです' });
+        if (!useBlob()) return json(res, 200, { direct: '/api/upload' });
+        return json(res, 200, await presignMedia(b.type, b.size));
+      }
+      if (pathname === '/api/upload' && method === 'POST') {
+        if (useBlob()) return json(res, 404, { error: 'not_found' });
+        const type = (req.headers['content-type'] || '').split(';')[0];
+        if (!allowedType(type)) return json(res, 415, { error: 'type', message: '画像か動画を選んでください' });
+        return json(res, 200, { url: await putLocalMedia(await readBody(req, MEDIA_MAX), type) });
+      }
+
+      /* ---- メンバー（管理者だけ） ---- */
+      if (pathname.startsWith('/api/users') || pathname.startsWith('/api/invites')) {
+        if (me.role !== 'admin') return json(res, 403, { error: 'forbidden', message: 'メンバーの管理は管理者だけができます' });
+        if (pathname === '/api/users' && method === 'GET') {
+          return json(res, 200, { users: users.users.map(publicUser), invites: users.invites.filter(i => i.exp > Date.now() && !i.resetFor).map(({ id, role, exp }) => ({ id, role, exp })) });
+        }
+        const um = pathname.match(/^\/api\/users\/([A-Za-z0-9_-]+)$/);
+        if (um && method === 'PATCH') {
+          const b = await readJson(req);
+          await run('users', doc => {
+            const u = doc.users.find(x => x.id === um[1]);
+            if (!u) return fail(404, 'not_found', 'そのメンバーは見つかりません');
+            if (b.role !== undefined && !['admin', 'writer'].includes(b.role)) return fail(400, 'invalid', '役割が正しくありません');
+            const wasAdmin = u.role === 'admin' && !u.disabled;
+            if (b.role !== undefined) u.role = b.role;
+            if (b.disabled !== undefined) { u.disabled = !!b.disabled; u.ses = (u.ses || 0) + 1; }
+            if (wasAdmin && !activeAdmins(doc).length) return fail(400, 'last_admin', '管理者が1人もいなくなるので、変えられません');
+          });
+          if (res.headersSent) return;
+          return json(res, 200, { ok: true });
+        }
+        const rm = pathname.match(/^\/api\/users\/([A-Za-z0-9_-]+)\/reset$/);
+        if (rm && method === 'POST') {
+          const target = users.users.find(x => x.id === rm[1]);
+          if (!target) return json(res, 404, { error: 'not_found', message: 'そのメンバーは見つかりません' });
+          const { token, invite } = makeInvite(target.role, me.id, target.id);
+          await run('users', doc => { doc.invites = doc.invites.filter(i => i.exp > Date.now() && i.resetFor !== target.id); doc.invites.push(invite); });
+          if (res.headersSent) return;
+          return json(res, 200, { token, exp: invite.exp });
+        }
+        if (pathname === '/api/invites' && method === 'POST') {
+          const b = await readJson(req);
+          const role = b.role === 'admin' ? 'admin' : 'writer';
+          const { token, invite } = makeInvite(role, me.id);
+          await run('users', doc => { doc.invites = doc.invites.filter(i => i.exp > Date.now()); doc.invites.push(invite); });
+          if (res.headersSent) return;
+          return json(res, 200, { token, role, exp: invite.exp });
+        }
+        const im = pathname.match(/^\/api\/invites\/([A-Za-z0-9_-]+)$/);
+        if (im && method === 'DELETE') {
+          await run('users', doc => { doc.invites = doc.invites.filter(i => i.id !== im[1]); });
+          if (res.headersSent) return;
+          return json(res, 200, { ok: true });
+        }
+      }
+      return json(res, 404, { error: 'not_found' });
+    }
 
     /* 手元で動かすときの画像置き場（本番は Blob のURLを直接使う） */
     if (pathname.startsWith('/media/')) {
       const buf = await readLocalMedia(pathname.slice(7));
       if (!buf) return send(res, 404, 'not found', 'text/plain');
       const ext = pathname.split('.').pop();
-      const t = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', mp4: 'video/mp4', webm: 'video/webm' }[ext] || 'application/octet-stream';
+      const t = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime' }[ext] || 'application/octet-stream';
       return send(res, 200, buf, t, { 'Cache-Control': 'public, max-age=31536000, immutable' });
     }
 
     /* ---- 読者のページ ---- */
     if (method !== 'GET' && method !== 'HEAD') return send(res, 405, 'method not allowed', 'text/plain');
-    const data = await load();
+    const { data } = await getDoc('content');
     const o = origin(req);
-    if (pathname === '/' || pathname === '') return html(res, 200, homePage(data, o));
-    if (pathname === '/sitemap.xml') return send(res, 200, sitemap(data, o), 'application/xml; charset=utf-8', { 'Cache-Control': 'public, s-maxage=300' });
-    if (pathname === '/feed.xml') return send(res, 200, feed(data, o), 'application/rss+xml; charset=utf-8', { 'Cache-Control': 'public, s-maxage=300' });
+    if (pathname === '/' || pathname === '') return page(res, 200, homePage(data, o));
+    if (pathname === '/sitemap.xml') return page(res, 200, sitemap(data, o), 'application/xml; charset=utf-8');
+    if (pathname === '/feed.xml') return page(res, 200, feed(data, o), 'application/rss+xml; charset=utf-8');
     if (pathname === '/robots.txt') return send(res, 200, `User-agent: *\nDisallow: /write\nDisallow: /api/\nSitemap: ${o}/sitemap.xml\n`, 'text/plain; charset=utf-8');
 
     const slug = decodeURIComponent(pathname.replace(/^\/+|\/+$/g, ''));
     const p = SLUG.test(slug) && published(data).find(x => x.slug === slug);
-    if (p) return html(res, 200, postPage(data, p, o));
-    return html(res, 404, notFoundPage(data, o));
+    if (p) return page(res, 200, postPage(data, p, o));
+    return page(res, 404, notFoundPage(data, o));
   } catch (e) {
     console.error(e);
-    if (e.status === 413) return json(res, 413, { error: 'too_large', message: 'ファイルが大きすぎます（4MBまで）' });
+    if (res.headersSent) return;
+    if (e.status === 413) return json(res, 413, { error: 'too_large', message: 'データが大きすぎます' });
     if (e instanceof SyntaxError) return json(res, 400, { error: 'bad_json' });
     return json(res, 500, { error: 'server', message: 'サーバーでエラーが起きました' });
   }

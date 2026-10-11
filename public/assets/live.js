@@ -150,10 +150,12 @@ if (article) {
 const nav = document.getElementById('nav');
 if (nav && nav.dataset.slug !== undefined) {
   fetch('/api/me', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : null).then(me => {
-    if (!me || !me.writer) return;
+    const u = me && me.user;
+    if (!u) return;
     const slug = nav.dataset.slug;
-    nav.innerHTML = slug
+    const mine = u.role === 'admin' || u.id === nav.dataset.author;
+    nav.innerHTML = slug && mine
       ? `<a class="btn" href="/write#${esc(slug)}">この記事を編集</a><a class="btn primary" href="/write#new">＋ 新しい記事</a>`
-      : `<a class="btn" href="/write">記事の管理</a><a class="btn primary" href="/write#new">＋ 新しい記事</a>`;
+      : `<a class="btn" href="/write">記事の一覧</a><a class="btn primary" href="/write#new">＋ 新しい記事</a>`;
   }).catch(() => {});
 }

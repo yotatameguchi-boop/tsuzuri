@@ -2,7 +2,12 @@
 import http from 'node:http';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import handler from './api/index.js';
+/* TSUZURI_ENV_FILE を指定すると、そのファイルから BLOB_READ_WRITE_TOKEN だけ読んで、手元でも本物のストレージを使う */
+if (process.env.TSUZURI_ENV_FILE && !process.env.BLOB_READ_WRITE_TOKEN) {
+  const m = (await fs.readFile(process.env.TSUZURI_ENV_FILE, 'utf8')).match(/^BLOB_READ_WRITE_TOKEN="?([^"\n]+)"?/m);
+  if (m) process.env.BLOB_READ_WRITE_TOKEN = m[1];
+}
+const { default: handler } = await import('./api/index.js');
 
 const PORT = +process.env.PORT || 3071;
 const PUB = path.join(path.dirname(new URL(import.meta.url).pathname), 'public');

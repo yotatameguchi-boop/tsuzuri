@@ -1,85 +1,221 @@
-/* 書く人の画面（/write）。ログイン → 記事一覧 → 編集 の3つだけ。 */
+/* 書く人の画面（/write）。ログイン → 記事一覧 → 編集。管理者はメンバーも管理できる。 */
 import { esc, renderBody, liveKinds, excerpt } from './render.js';
 import { hydrate, hideTip } from './live.js';
 
 const $ = id => document.getElementById(id);
 const root = $('root');
-const S = { data: null, view: 'list', editSlug: null, dirty: false, pending: {}, pane: 'src', saving: false };
+const S = { me: null, data: null, view: 'list', editId: null, dirty: false, pending: {}, pane: 'src', saving: false };
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const fmtDate = d => (d || '').replace(/-/g, '.');
 const readMin = body => Math.max(1, Math.round(String(body || '').replace(/\s/g, '').length / 500));
+const isAdmin = () => S.me && S.me.role === 'admin';
+const canEdit = p => isAdmin() || !p.rev || p.author === S.me.id;
+const ROLE = { admin: '管理者', writer: '書き手' };
 
-function toast(msg) {
+function toast(msg, ms = 3200) {
   const t = $('toast');
   t.textContent = msg;
   t.classList.add('show');
   clearTimeout(toast.t);
-  toast.t = setTimeout(() => t.classList.remove('show'), 3000);
+  if (ms) toast.t = setTimeout(() => t.classList.remove('show'), ms);
 }
 
 async function api(path, opts = {}) {
-  const r = await fetch(path, { credentials: 'same-origin', ...opts, headers: { ...(opts.body && typeof opts.body === 'string' ? { 'Content-Type': 'application/json' } : {}), ...(opts.headers || {}) } });
+  const r = await fetch(path, { credentials: 'same-origin', ...opts, headers: { ...(typeof opts.body === 'string' ? { 'Content-Type': 'application/json' } : {}), ...(opts.headers || {}) } });
   let body = null;
   try { body = await r.json(); } catch {}
   return { ok: r.ok, status: r.status, body: body || {} };
 }
+const post = (path, data, method = 'POST') => api(path, { method, body: JSON.stringify(data || {}) });
 
-/* ---- ログイン ---- */
-function renderLogin(msg = '') {
-  $('nav').innerHTML = '';
-  root.innerHTML = `<form class="login" id="login"><h1>書く人のログイン</h1><p>このサイトの合言葉を入れてください。</p>
-    <input type="password" id="pw" autocomplete="current-password" aria-label="合言葉" placeholder="合言葉" required>
-    <div class="err" id="err">${esc(msg)}</div><button class="btn primary" type="submit">ログイン</button>
-    <p><a href="/">← 読者のページへ</a></p></form>`;
-  $('pw').focus();
-  $('login').addEventListener('submit', async e => {
+/* フォームの共通処理：送信中はボタンを止め、エラーは下に出す */
+function bindForm(form, handler) {
+  form.addEventListener('submit', async e => {
     e.preventDefault();
-    const btn = e.target.querySelector('button');
-    btn.disabled = true;
-    const r = await api('/api/login', { method: 'POST', body: JSON.stringify({ password: $('pw').value }) });
-    btn.disabled = false;
-    if (r.ok) start();
-    else { $('err').textContent = r.body.message || 'ログインできませんでした'; $('pw').select(); }
+    const btn = form.querySelector('button[type=submit]');
+    const err = form.querySelector('.err');
+    if (btn) btn.disabled = true;
+    if (err) err.textContent = '';
+    try {
+      const msg = await handler(Object.fromEntries(new FormData(form)));
+      if (msg && err) err.textContent = msg;
+    } finally { if (btn) btn.disabled = false; }
   });
 }
 
-/* ---- 一覧 ---- */
+/* ---- 入口：ログイン・最初の管理者づくり・招待の受け取り ---- */
+function renderGate(kind, note = '') {
+  $('nav').innerHTML = '';
+  document.title = '書く | Tsuzuri';
+  const pw = (name, label, ac) => `<label class="field">${label}<input type="password" name="${name}" autocomplete="${ac}" required minlength="${ac === 'new-password' ? 8 : 1}"></label>`;
+  const acct = `<label class="field">名前（記事に表示されます）<input name="name" autocomplete="name" required maxlength="40"></label>
+    <label class="field">ログインID（半角英小文字・数字、3文字以上）<input name="loginId" autocomplete="username" required pattern="[a-z0-9][a-z0-9._\\-]{2,31}" autocapitalize="none"></label>
+    ${pw('password', 'パスワード（8文字以上）', 'new-password')}`;
+  const forms = {
+    login: `<h1>ログイン</h1><p>${esc(note) || 'ログインIDとパスワードを入れてください。'}</p>
+      <label class="field">ログインID<input name="loginId" autocomplete="username" required autocapitalize="none"></label>
+      ${pw('password', 'パスワード', 'current-password')}
+      <div class="err" role="alert"></div><button class="btn primary" type="submit">ログイン</button>
+      <p>アカウントは、管理者から届く招待リンクで作れます。</p>`,
+    setup: `<h1>はじめに、管理者を作ります</h1><p>このサイトを最初に設定する人だけの手順です。サイトの合言葉（Vercel の TSUZURI_PASSWORD）を入れてください。</p>
+      ${pw('setupKey', 'サイトの合言葉', 'off')}${acct}
+      <div class="err" role="alert"></div><button class="btn primary" type="submit">管理者を作って始める</button>`,
+    invite: `<h1>招待されました</h1><p>名前とログインIDとパスワードを決めると、すぐに書き始められます。</p>${acct}
+      <div class="err" role="alert"></div><button class="btn primary" type="submit">参加する</button>`,
+    reset: `<h1>パスワードを決め直す</h1><p>${esc(note)}</p>${pw('password', '新しいパスワード（8文字以上）', 'new-password')}
+      <div class="err" role="alert"></div><button class="btn primary" type="submit">決め直してログイン</button>`,
+  };
+  root.innerHTML = `<form class="login" id="gate">${forms[kind]}<p><a href="/">← 読者のページへ</a></p></form>`;
+  root.querySelector('input').focus();
+  bindForm($('gate'), async f => {
+    let r;
+    if (kind === 'login') r = await post('/api/login', f);
+    if (kind === 'setup') r = await post('/api/setup', f);
+    if (kind === 'invite') r = await post('/api/accept', { ...f, loginId: f.loginId.toLowerCase(), token: inviteToken() });
+    if (kind === 'reset') r = await post('/api/accept', { ...f, token: inviteToken() });
+    if (!r.ok) return r.body.message || 'うまくいきませんでした。もう一度試してください';
+    if (kind === 'invite' || kind === 'reset') history.replaceState(null, '', '/write');
+    start();
+  });
+}
+const inviteToken = () => (location.hash.match(/^#invite=([\w-]+)/) || [])[1];
+
+/* ---- 上のバー ---- */
 function renderNav() {
   const nav = $('nav');
-  nav.innerHTML = S.view === 'list'
-    ? `<a class="btn ghost" href="/" target="_blank" rel="noopener">サイトを見る ↗</a><button class="btn ghost" type="button" id="logout">ログアウト</button><button class="btn primary" type="button" id="new-post">＋ 新しい記事</button>`
-    : '';
-  $('new-post')?.addEventListener('click', newPost);
-  $('logout')?.addEventListener('click', async () => { await api('/api/logout', { method: 'POST' }); renderLogin('ログアウトしました'); });
+  if (S.view === 'edit') { nav.innerHTML = ''; return; }
+  nav.innerHTML = `<a class="btn ghost" href="/" target="_blank" rel="noopener">サイトを見る ↗</a>
+    <details class="menu"><summary class="btn ghost">${esc(S.me.name)} ▾</summary><div class="menu-list">
+      <a href="/write">記事の一覧</a>
+      ${isAdmin() ? '<a href="/write#members">メンバー</a>' : ''}
+      <a href="/write#account">自分の設定</a>
+      <button type="button" id="logout">ログアウト</button>
+    </div></details>
+    <button class="btn primary" type="button" id="new-post">＋ 新しい記事</button>`;
+  $('new-post').addEventListener('click', newPost);
+  $('logout').addEventListener('click', async () => { await post('/api/logout'); S.me = null; renderGate('login', 'ログアウトしました。'); });
+  nav.querySelectorAll('.menu-list a').forEach(a => a.addEventListener('click', () => nav.querySelector('details').removeAttribute('open')));
 }
 
+/* ---- 記事の一覧 ---- */
 function renderList() {
-  document.title = '記事の管理 | ' + (S.data.site.name || 'Tsuzuri');
+  document.title = '記事の一覧 | ' + (S.data.site.name || 'Tsuzuri');
   const site = S.data.site;
-  const posts = [...S.data.posts].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const posts = S.data.posts.filter(p => canEdit(p) || !p.draft).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   root.innerHTML = `<section class="home-head"><h1>${esc(site.name || '無題のサイト')}</h1>${site.tagline ? `<p>${esc(site.tagline)}</p>` : ''}` +
-    `<button class="btn ghost" type="button" id="site-open" style="margin-top:10px;margin-left:-10px">サイト名と説明を変える</button>` +
-    `<form class="site-edit" id="site-form" hidden><input id="site-name" aria-label="サイト名" placeholder="サイト名" value="${esc(site.name || '')}">` +
-    `<input id="site-tag" aria-label="サイトの説明" placeholder="サイトの説明（1行）" value="${esc(site.tagline || '')}">` +
-    `<div class="row"><button class="btn primary" type="submit">保存</button><button class="btn ghost" type="button" id="site-cancel">やめる</button></div></form></section>` +
-    `<section class="posts" aria-label="記事一覧">${posts.length ? posts.map(p => {
+    (isAdmin() ? `<button class="btn ghost" type="button" id="site-open" style="margin-top:10px;margin-left:-10px">サイト名と説明を変える</button>
+    <form class="site-edit" id="site-form" hidden><input name="name" aria-label="サイト名" placeholder="サイト名" value="${esc(site.name || '')}" required>
+    <input name="tagline" aria-label="サイトの説明" placeholder="サイトの説明（1行）" value="${esc(site.tagline || '')}">
+    <div class="err" role="alert"></div><div class="row"><button class="btn primary" type="submit">保存</button><button class="btn ghost" type="button" id="site-cancel">やめる</button></div></form>` : '') +
+    `</section><section class="posts" aria-label="記事一覧">${posts.length ? posts.map(p => {
       const kinds = liveKinds(p.body);
-      const chips = [...(p.draft ? ['<span class="chip draft">下書き（読者には見えません）</span>'] : []), ...kinds.map(k => `<span class="chip">${k}</span>`)];
-      return `<div class="pr w"><a class="post-row" href="/write#${esc(p.slug)}" data-edit="${esc(p.slug)}"><time>${fmtDate(p.date)}</time><div><h2 class="t">${esc(p.title || '無題')}</h2></div>` +
-        `<p class="x">${esc(excerpt(p.body))}</p>${chips.length ? `<div class="chips">${chips.join('')}</div>` : ''}</a>` +
-        `<button class="btn row-edit" type="button" data-edit="${esc(p.slug)}">編集</button></div>`;
+      const mine = canEdit(p);
+      const chips = [
+        ...(p.draft ? ['<span class="chip draft">下書き（読者には見えません）</span>'] : []),
+        ...(p.authorName ? [`<span class="chip draft">${esc(p.authorName)}</span>`] : []),
+        ...kinds.map(k => `<span class="chip">${k}</span>`),
+      ];
+      const href = mine ? `/write#${esc(p.slug)}` : `/${esc(p.slug)}`;
+      return `<div class="pr w"><a class="post-row" href="${href}"${mine ? ` data-edit="${esc(p.id)}"` : ' target="_blank" rel="noopener"'}><time>${fmtDate(p.date)}</time><div><h2 class="t">${esc(p.title || '無題')}</h2></div>` +
+        `<p class="x">${esc(excerpt(p.body, 100))}</p><div class="chips">${chips.join('')}</div></a>` +
+        (mine ? `<button class="btn row-edit" type="button" data-edit="${esc(p.id)}">編集</button>` : `<a class="btn row-edit" href="/${esc(p.slug)}" target="_blank" rel="noopener">読む</a>`) + `</div>`;
     }).join('') : `<div class="empty-note"><p>まだ記事がありません</p><button class="btn primary" type="button" id="first-post">最初の記事を書く</button></div>`}</section>`;
   root.querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', e => { e.preventDefault(); openEditor(b.dataset.edit); }));
   $('first-post')?.addEventListener('click', newPost);
   const form = $('site-form');
-  $('site-open').addEventListener('click', () => { form.hidden = false; $('site-open').hidden = true; $('site-name').focus(); });
-  $('site-cancel').addEventListener('click', renderList);
-  form.addEventListener('submit', async e => {
-    e.preventDefault();
-    site.name = $('site-name').value.trim() || site.name;
-    site.tagline = $('site-tag').value.trim();
-    S.dirty = true;
-    if (await save()) { toast('サイト名と説明を保存しました'); renderList(); }
+  if (form) {
+    $('site-open').addEventListener('click', () => { form.hidden = false; $('site-open').hidden = true; form.querySelector('input').focus(); });
+    $('site-cancel').addEventListener('click', renderList);
+    bindForm(form, async f => {
+      const r = await post('/api/site', f, 'PUT');
+      if (!r.ok) return r.body.message || '保存できませんでした';
+      S.data.site = { ...S.data.site, name: f.name.trim(), tagline: f.tagline.trim() };
+      toast('サイト名と説明を保存しました');
+      renderList();
+    });
+  }
+}
+
+/* ---- メンバー（管理者） ---- */
+async function renderMembers() {
+  document.title = 'メンバー | ' + (S.data.site.name || 'Tsuzuri');
+  root.innerHTML = '<p class="empty-note">読み込み中…</p>';
+  const r = await api('/api/users');
+  if (!r.ok) { root.innerHTML = `<p class="empty-note">${esc(r.body.message || '読み込めませんでした')}</p>`; return; }
+  const { users, invites } = r.body;
+  root.innerHTML = `<section class="manage">
+    <h1>メンバー</h1><p class="sub">管理者はすべての記事・サイト設定・メンバーを扱えます。書き手は自分の記事だけを書けます。</p>
+    <div class="mlist">${users.map(u => `<div class="mrow">
+      <span class="t">${esc(u.name)}<span class="id">${esc(u.loginId)}${u.id === S.me.id ? '（あなた）' : ''}</span></span>
+      ${u.disabled ? '<span class="chip draft">利用停止中</span>' : ''}
+      <select data-role="${esc(u.id)}" aria-label="${esc(u.name)}の役割">${['writer', 'admin'].map(x => `<option value="${x}"${u.role === x ? ' selected' : ''}>${ROLE[x]}</option>`).join('')}</select>
+      ${u.id === S.me.id ? '' : `<button class="btn" type="button" data-reset="${esc(u.id)}" data-name="${esc(u.name)}">パスワード再設定リンク</button><button class="btn" type="button" data-disable="${esc(u.id)}" data-on="${u.disabled ? 0 : 1}">${u.disabled ? '利用を再開' : '利用を止める'}</button>`}
+    </div>`).join('')}</div>
+    <h2 class="sec">人を招待する</h2>
+    <form class="invite-form" id="invite-form"><select name="role" aria-label="招待する人の役割"><option value="writer">書き手として</option><option value="admin">管理者として</option></select>
+      <button class="btn primary" type="submit">招待リンクを作る</button><div class="err" role="alert"></div></form>
+    <div id="invite-out"></div>
+    ${invites.length ? `<h2 class="sec">まだ使われていない招待</h2><div class="mlist">${invites.map(i => `<div class="mrow"><span class="t">${ROLE[i.role]}として</span><time>${new Date(i.exp).toLocaleDateString('ja-JP')} まで</time><button class="btn" type="button" data-revoke="${esc(i.id)}">取り消す</button></div>`).join('')}</div>` : ''}
+  </section>`;
+  root.querySelectorAll('[data-role]').forEach(sel => sel.addEventListener('change', async () => {
+    const r = await post(`/api/users/${sel.dataset.role}`, { role: sel.value }, 'PATCH');
+    toast(r.ok ? '役割を変えました' : r.body.message || '変えられませんでした');
+    renderMembers();
+  }));
+  root.querySelectorAll('[data-disable]').forEach(b => b.addEventListener('click', async () => {
+    const r = await post(`/api/users/${b.dataset.disable}`, { disabled: b.dataset.on === '1' }, 'PATCH');
+    toast(r.ok ? (b.dataset.on === '1' ? '利用を止めました。その人はログインできなくなります' : '利用を再開しました') : r.body.message || '変えられませんでした');
+    renderMembers();
+  }));
+  root.querySelectorAll('[data-reset]').forEach(b => b.addEventListener('click', async () => {
+    const r = await post(`/api/users/${b.dataset.reset}/reset`);
+    if (!r.ok) { toast(r.body.message || '作れませんでした'); return; }
+    showLink(`${location.origin}/write#invite=${r.body.token}`, `${b.dataset.name}さんに送ってください。開くと新しいパスワードを決められます（24時間有効・1回だけ使えます）。`);
+  }));
+  root.querySelectorAll('[data-revoke]').forEach(b => b.addEventListener('click', async () => {
+    await api(`/api/invites/${b.dataset.revoke}`, { method: 'DELETE' });
+    toast('招待を取り消しました'); renderMembers();
+  }));
+  bindForm($('invite-form'), async f => {
+    const r = await post('/api/invites', f);
+    if (!r.ok) return r.body.message || '作れませんでした';
+    showLink(`${location.origin}/write#invite=${r.body.token}`, `このリンクを招待する人に送ってください（${ROLE[r.body.role]}・7日間有効・1回だけ使えます）。`);
+  });
+}
+
+function showLink(link, text) {
+  $('invite-out').innerHTML = `<div class="notice"><span>${esc(text)}</span>
+    <input class="link" readonly value="${esc(link)}" aria-label="リンク"><button class="btn primary" type="button" id="copy-link">コピー</button></div>`;
+  const inp = $('invite-out').querySelector('input');
+  inp.select();
+  $('invite-out').scrollIntoView({ block: 'nearest' });
+  $('copy-link').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(link); toast('リンクをコピーしました'); } catch { inp.select(); toast('選択された文字をコピーしてください'); }
+  });
+}
+
+/* ---- 自分の設定 ---- */
+function renderAccount() {
+  document.title = '自分の設定 | ' + (S.data.site.name || 'Tsuzuri');
+  root.innerHTML = `<section class="manage"><h1>自分の設定</h1><p class="sub">ログインID：${esc(S.me.loginId)}（${ROLE[S.me.role]}）</p>
+    <form class="stack" id="name-form"><h2 class="sec">名前</h2><label class="field">記事に表示される名前<input name="name" value="${esc(S.me.name)}" required maxlength="40"></label>
+      <div class="err" role="alert"></div><button class="btn primary" type="submit">名前を保存</button></form>
+    <form class="stack" id="pw-form"><h2 class="sec">パスワード</h2>
+      <label class="field">今のパスワード<input type="password" name="currentPassword" autocomplete="current-password" required></label>
+      <label class="field">新しいパスワード（8文字以上）<input type="password" name="newPassword" autocomplete="new-password" required minlength="8"></label>
+      <div class="err" role="alert"></div><button class="btn primary" type="submit">パスワードを変える</button>
+      <p class="sub">変えると、ほかの端末でのログインは切れます。</p></form></section>`;
+  bindForm($('name-form'), async f => {
+    const r = await post('/api/account', { name: f.name });
+    if (!r.ok) return r.body.message;
+    S.me = r.body.user;
+    S.data.posts.forEach(p => { if (p.author === S.me.id) p.authorName = S.me.name; });
+    toast('名前を保存しました。あなたの記事の署名も変わりました'); renderNav();
+  });
+  bindForm($('pw-form'), async f => {
+    const r = await post('/api/account', f);
+    if (!r.ok) return r.body.message;
+    $('pw-form').reset(); toast('パスワードを変えました');
   });
 }
 
@@ -87,98 +223,190 @@ function route() {
   hideTip();
   renderNav();
   if (S.view === 'edit') return renderEditor();
+  if (S.view === 'members' && isAdmin()) return renderMembers();
+  if (S.view === 'account') return renderAccount();
   renderList();
 }
 
-window.addEventListener('hashchange', () => {
+function applyHash() {
+  if (inviteToken()) { toast('すでにログインしています。招待リンクは、招待する人に渡してください'); history.replaceState(null, '', '/write'); }
   const h = decodeURIComponent(location.hash.slice(1));
   if (h === 'new') return newPost();
-  if (h && S.data.posts.some(p => p.slug === h)) { if (S.editSlug !== h || S.view !== 'edit') openEditor(h); }
-  else if (!h && S.view === 'edit') closeEditor();
+  if (h === 'members' || h === 'account') { S.view = h; return route(); }
+  const p = h && S.data.posts.find(x => x.slug === h || x.id === h);
+  if (p && canEdit(p)) { S.editId = p.id; S.view = 'edit'; return route(); }
+  S.view = 'list'; route();
+}
+window.addEventListener('hashchange', () => {
+  if (!S.me) return;
+  if (S.view === 'edit' && S.dirty) { toast('保存していない変更があります。先に保存するか「← 戻る」を押してください'); return; }
+  applyHash();
 });
 
-/* ---- 編集 ---- */
-function backup() { try { localStorage.setItem('tsuzuri-backup', JSON.stringify({ at: Date.now(), data: S.data })); } catch {} }
+/* ---- 編集：控え・保存・削除 ---- */
+const draftKey = id => 'tsuzuri-draft-' + id;
+let backupTimer;
+function backup() {
+  clearTimeout(backupTimer);
+  backupTimer = setTimeout(() => {
+    const p = S.data.posts.find(x => x.id === S.editId);
+    if (!p) return;
+    try { localStorage.setItem(draftKey(p.id), JSON.stringify({ at: Date.now(), baseRev: p.rev || 0, post: { slug: p.slug, title: p.title, body: p.body, date: p.date, draft: p.draft } })); } catch {}
+  }, 400);
+}
+const dropBackup = id => { try { localStorage.removeItem(draftKey(id)); } catch {} };
 function markDirty() { S.dirty = true; backup(); updateState(); }
 
 function newPost() {
-  const slug = 'p-' + Date.now().toString(36);
-  S.data.posts.push({ slug, title: '', date: today(), draft: true, body: '' });
-  S.dirty = true;
-  openEditor(slug);
+  const id = 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  S.data.posts.push({ id, slug: 'p-' + Date.now().toString(36), title: '', date: today(), draft: true, body: '', author: S.me.id, authorName: S.me.name, rev: 0 });
+  S.dirty = false;
+  openEditor(id);
 }
-function openEditor(slug) {
-  S.view = 'edit'; S.editSlug = slug;
-  if (location.hash !== '#' + slug) history.replaceState(null, '', '/write#' + slug);
+function openEditor(id) {
+  const p = S.data.posts.find(x => x.id === id);
+  if (!p) return;
+  S.view = 'edit'; S.editId = id; S.dirty = false;
+  history.replaceState(null, '', '/write#' + (p.rev ? p.slug : 'new'));
   route(); window.scrollTo(0, 0);
 }
 function closeEditor() {
-  const p = S.data.posts.find(x => x.slug === S.editSlug);
+  const p = S.data.posts.find(x => x.id === S.editId);
   const back = $('ed-back');
-  const empty = p && !p.title.trim() && !p.body.trim();
+  const empty = p && !p.rev && !p.title.trim() && !p.body.trim();
   if (!empty && S.dirty && back && !back.classList.contains('armed')) {
     back.classList.add('armed'); back.textContent = '保存せずに戻る';
-    toast('保存していない変更があります。戻るならもう一度押してください');
+    toast('保存していない変更があります。戻るならもう一度押してください（内容はこのブラウザに控えてあります）');
     setTimeout(() => { back.classList.remove('armed'); back.textContent = '← 戻る'; }, 4000);
     return;
   }
-  if (empty) { S.data.posts = S.data.posts.filter(x => x !== p); S.dirty = false; }
+  if (p && !p.rev) { S.data.posts = S.data.posts.filter(x => x !== p); if (empty) dropBackup(p.id); }
+  S.dirty = false;
   S.view = 'list';
   history.replaceState(null, '', '/write');
   route();
 }
 
-/* ---- 保存：記事データ全体をサーバーへ ---- */
+/* 今開いている記事を保存する（ほかの人の記事・サイト設定には触れない） */
 async function save() {
   if (S.saving) return false;
+  const p = S.data.posts.find(x => x.id === S.editId);
+  if (!p) return false;
   S.saving = true;
   const btns = [...document.querySelectorAll('#ed-pub, #ed-draft, #ed-unpub')];
   btns.forEach(b => { b.disabled = true; });
-  const p = S.data.posts.find(x => x.slug === S.editSlug);
-  if (p) p.updated = today();
-  const { rev, ...data } = S.data;
-  const r = await api('/api/content', { method: 'PUT', body: JSON.stringify({ rev, data }) });
+  const r = await post(`/api/posts/${p.id}`, { baseRev: p.rev || undefined, post: { slug: p.slug, title: p.title, body: p.body, date: p.date, draft: p.draft } }, 'PUT');
   S.saving = false;
   btns.forEach(b => { b.disabled = false; });
   if (r.ok) {
-    S.data.rev = r.body.rev; S.dirty = false;
-    try { localStorage.removeItem('tsuzuri-backup'); } catch {}
+    Object.assign(p, r.body.post);
+    S.dirty = false; dropBackup(p.id);
+    history.replaceState(null, '', '/write#' + p.slug);
     return true;
   }
-  if (r.status === 401) { toast('ログインが切れました。もう一度ログインしてください'); backup(); renderLogin('ログインが切れました。書いた内容はこのブラウザに控えてあります'); }
-  else if (r.status === 409) toast('ほかの画面で先に保存されています。ページを読み込み直してから、もう一度書いてください');
+  backup();
+  if (r.status === 401) { toast('ログインが切れました。書いた内容はこのブラウザに控えてあります'); S.me = null; renderGate('login', 'ログインが切れました。もう一度ログインすると、控えから戻せます。'); }
+  else if (r.status === 409) showConflict(p, r.body.post);
   else toast(r.body.message || '保存できませんでした。通信を確かめて、もう一度押してください');
   return false;
 }
+
+async function deletePost(p) {
+  if (!p.rev) { S.data.posts = S.data.posts.filter(x => x !== p); dropBackup(p.id); return true; }
+  const r = await api(`/api/posts/${p.id}`, { method: 'DELETE', body: JSON.stringify({ baseRev: p.rev }) });
+  if (r.ok || r.status === 404) { S.data.posts = S.data.posts.filter(x => x !== p); dropBackup(p.id); S.dirty = false; return true; }
+  if (r.status === 409) showConflict(p, r.body.post);
+  else toast(r.body.message || '削除できませんでした');
+  return false;
+}
+
+function showConflict(p, latest) {
+  const note = $('ed-note');
+  if (!note || !latest) { toast('ほかの画面で先に保存されています'); return; }
+  note.innerHTML = `<div class="notice warn"><span>この記事は、ほかの画面で先に保存されています。あなたの変更はこのブラウザに控えてあります。</span>
+    <button class="btn" type="button" id="cf-open">最新の版を開く</button><button class="btn primary" type="button" id="cf-mine">自分の変更で上書きする</button></div>`;
+  $('cf-open').addEventListener('click', () => { Object.assign(p, latest); S.dirty = false; renderEditor(); });
+  $('cf-mine').addEventListener('click', async () => { p.rev = latest.rev; note.innerHTML = ''; if (await save()) { toast('あなたの変更で保存しました'); updateState(); } });
+}
+
+/* 読むだけの記事・控えの復元 */
+function setupEditorExtras(p, src, refresh) {
+  const note = $('ed-note');
+  if (!canEdit(p)) {
+    note.innerHTML = `<div class="notice"><span>この記事は${esc(p.authorName || 'ほかの人')}さんの記事です。直せるのは書いた本人と管理者だけです。</span></div>`;
+    $('ed-title').readOnly = true; src.readOnly = true;
+    ['ed-pub', 'ed-draft', 'ed-unpub'].forEach(id => { const b = $(id); if (b) b.hidden = true; });
+    root.querySelector('details.settings').hidden = true;
+    $('tools').hidden = true;
+    return;
+  }
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(draftKey(p.id)) || 'null'); } catch {}
+  if (!saved || !saved.post) return;
+  const same = ['slug', 'title', 'body', 'draft'].every(k => saved.post[k] === p[k]);
+  if (same) { dropBackup(p.id); return; }
+  const when = new Date(saved.at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  note.innerHTML = `<div class="notice"><span>${when} に書いた、保存していない変更が残っています。</span>
+    <button class="btn primary" type="button" id="bk-yes">その変更に戻す</button><button class="btn ghost" type="button" id="bk-no">捨てる</button></div>`;
+  $('bk-yes').addEventListener('click', () => {
+    Object.assign(p, saved.post);
+    note.innerHTML = '';
+    renderEditor();
+    S.dirty = true; updateState();
+    toast('戻しました。「公開する」か「下書き保存」で保存されます');
+  });
+  $('bk-no').addEventListener('click', () => { dropBackup(p.id); note.innerHTML = ''; });
+}
 window.addEventListener('beforeunload', e => { if (S.dirty) { e.preventDefault(); e.returnValue = ''; } });
 
-/* ---- 画像・動画：選んだらすぐサーバーに置いて、そのURLを原稿に入れる ---- */
+/* ---- 画像・動画：ブラウザからストレージへ直接送る（100MBまで） ---- */
 $('file').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) addMedia(f); });
+
+function putWithProgress(url, blob, type, onProgress) {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open('PUT', url);
+    x.setRequestHeader('Content-Type', type);
+    x.upload.onprogress = e => { if (e.lengthComputable) onProgress(Math.round(e.loaded / e.total * 100)); };
+    x.onload = () => (x.status >= 200 && x.status < 300 ? resolve() : reject(new Error('status ' + x.status)));
+    x.onerror = () => reject(new Error('network'));
+    x.send(blob);
+  });
+}
 
 async function addMedia(file) {
   const src = $('src');
   if (!src) return;
-  let blob = file;
-  if (/^image\//.test(file.type) && !/svg|gif/.test(file.type)) {
+  let blob = file, type = file.type;
+  if (/^image\//.test(type) && !/svg|gif/.test(type)) {
     try {
       const bmp = await createImageBitmap(file);
-      const scale = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+      const scale = Math.min(1, 2000 / Math.max(bmp.width, bmp.height));
       const c = document.createElement('canvas');
       c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale);
       c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
-      const png = file.type === 'image/png' && file.size < 400000;
+      const png = type === 'image/png' && file.size < 600000;
       blob = await new Promise(r => c.toBlob(r, png ? 'image/png' : 'image/jpeg', 0.86));
+      type = blob.type;
     } catch {}
-  } else if (/^video\//.test(file.type)) {
-    if (file.size > 4 * 1024 * 1024) { toast('動画は4MBまでです。長い動画は YouTube に上げて、URLを1行で貼ってください'); return; }
-  } else if (!/^image\//.test(file.type)) { toast('画像か動画（mp4・webm）を選んでください'); return; }
-  toast('アップロード中…');
-  const r = await fetch('/api/upload', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': blob.type }, body: blob });
-  let body = {};
-  try { body = await r.json(); } catch {}
-  if (!r.ok) { toast(body.message || 'アップロードできませんでした'); return; }
+  } else if (!/^(image|video)\//.test(type)) { toast('画像か動画を選んでください'); return; }
+  if (blob.size > 100 * 1024 * 1024) { toast('ファイルは100MBまでです。長い動画は YouTube に上げて、URLを1行で貼ってください'); return; }
+  toast('アップロードの準備中…', 0);
+  const r = await post('/api/upload-url', { type, size: blob.size });
+  if (!r.ok) { toast(r.body.message || 'アップロードできませんでした'); return; }
+  let url = r.body.url;
+  try {
+    if (r.body.direct) {
+      const up = await fetch(r.body.direct, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': type }, body: blob });
+      const j = await up.json();
+      if (!up.ok) throw new Error(j.message);
+      url = j.url;
+    } else {
+      await putWithProgress(r.body.putUrl, blob, type, pct => toast(`アップロード中… ${pct}%`, 0));
+    }
+  } catch { toast('アップロードできませんでした。通信を確かめて、もう一度試してください'); return; }
   const alt = file.name.replace(/\.[^.]+$/, '');
-  insertBlock(src, `![${alt}](${body.url})`);
+  insertBlock(src, `![${alt}](${url})`);
   src.dispatchEvent(new Event('input'));
   toast('入れました');
 }
@@ -210,7 +438,7 @@ const PARTS = [
 ];
 
 function renderEditor() {
-  const p = S.data.posts.find(x => x.slug === S.editSlug);
+  const p = S.data.posts.find(x => x.id === S.editId);
   if (!p) { S.view = 'list'; return route(); }
   root.innerHTML = `<section class="editor" data-pane="${S.pane}">
     <div class="ed-bar">
@@ -220,6 +448,7 @@ function renderEditor() {
       <button class="btn" type="button" id="ed-draft">下書き保存</button>
       <button class="btn primary" type="button" id="ed-pub">公開する</button>
     </div>
+    <div id="ed-note"></div>
     <details class="settings"><summary>記事の設定（URL・日付・削除）</summary><div class="set-grid">
       <label class="field">記事のURLの末尾（半角英数とハイフン）<input id="ed-slug" value="${esc(p.slug)}"></label>
       <label class="field" style="flex:0 0 160px;min-width:0">日付<input id="ed-date" type="date" value="${esc(p.date || today())}"></label>
@@ -255,6 +484,7 @@ function renderEditor() {
   };
   refresh();
   updateState();
+  setupEditorExtras(p, src, refresh);
   if (!p.title) $('ed-title').focus(); else src.focus();
 
   src.addEventListener('input', () => {
@@ -264,16 +494,14 @@ function renderEditor() {
     slashCheck();
   });
   $('ed-title').addEventListener('input', e => {
-    const old = p.title;
     p.title = e.target.value;
-    for (const o of S.data.posts) if (o !== p && old && o.body.includes(`[[${old}]]`)) o.body = o.body.split(`[[${old}]]`).join(`[[${p.title}]]`);
     markDirty(); refresh();
   });
   $('ed-title').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); src.focus(); } });
   $('ed-slug').addEventListener('change', e => {
     const v = e.target.value.trim().replace(/[^A-Za-z0-9._~-]/g, '-');
     if (!v || S.data.posts.some(o => o !== p && o.slug === v)) { e.target.value = p.slug; toast('そのURLは使えません（空か、ほかの記事と同じです）'); return; }
-    e.target.value = v; p.slug = v; S.editSlug = v; history.replaceState(null, '', '/write#' + v); markDirty();
+    e.target.value = v; p.slug = v; history.replaceState(null, '', '/write#' + v); markDirty();
   });
   $('ed-date').addEventListener('change', e => { p.date = e.target.value; markDirty(); });
   $('ed-back').addEventListener('click', closeEditor);
@@ -292,9 +520,7 @@ function renderEditor() {
       setTimeout(() => { del.classList.remove('armed'); del.textContent = 'この記事を削除'; }, 3000);
       return;
     }
-    S.data.posts = S.data.posts.filter(o => o !== p);
-    S.dirty = true;
-    if (await save()) { toast('記事を削除しました'); S.view = 'list'; history.replaceState(null, '', '/write'); route(); }
+    if (await deletePost(p)) { toast('記事を削除しました'); S.view = 'list'; history.replaceState(null, '', '/write'); route(); }
   });
   root.querySelectorAll('.ed-tabs button').forEach(b => b.addEventListener('click', () => {
     S.pane = b.dataset.pane;
@@ -416,7 +642,7 @@ function renderEditor() {
 function updateState() {
   const el = $('ed-state');
   if (!el) return;
-  const p = S.data.posts.find(x => x.slug === S.editSlug);
+  const p = S.data.posts.find(x => x.id === S.editId);
   if (!p) return;
   const status = p.draft ? '<strong>下書き</strong>（読者には見えません）' : '<strong>公開中</strong>';
   el.innerHTML = status + (S.dirty || Object.keys(S.pending).length ? '・保存していない変更があります' : '・保存済み');
@@ -431,6 +657,7 @@ function updateState() {
 }
 
 
+
 function insertBlock(src, text) {
   const s = src.selectionStart, v = src.value;
   const before = v.slice(0, s);
@@ -440,24 +667,20 @@ function insertBlock(src, text) {
 
 /* ---- 起動 ---- */
 async function start() {
+  const me = await api('/api/me');
+  if (!me.ok) { root.innerHTML = '<p class="empty-note">読み込めませんでした。少し待ってから再読み込みしてください。</p>'; return; }
+  if (me.body.setupNeeded) return renderGate('setup');
+  if (!me.body.user && inviteToken()) {
+    const info = await api('/api/invite-info?token=' + encodeURIComponent(inviteToken()));
+    if (!info.ok) { history.replaceState(null, '', '/write'); return renderGate('login', info.body.message); }
+    if (info.body.kind === 'reset') return renderGate('reset', `${info.body.name}さん（ログインID：${info.body.loginId}）の新しいパスワードを決めてください。`);
+    return renderGate('invite');
+  }
+  if (!me.body.user) return renderGate('login');
+  S.me = me.body.user;
   const r = await api('/api/content');
-  if (r.status === 401) {
-    const me = await api('/api/me');
-    return renderLogin(me.body.passwordConfigured === false ? 'このサイトにはまだ合言葉が設定されていません（Vercel の環境変数 TSUZURI_PASSWORD）' : '');
-  }
-  if (!r.ok) { root.innerHTML = `<p class="empty-note">読み込めませんでした。少し待ってから再読み込みしてください。</p>`; return; }
+  if (!r.ok) { root.innerHTML = '<p class="empty-note">記事を読み込めませんでした。少し待ってから再読み込みしてください。</p>'; return; }
   S.data = r.body;
-  let saved = null;
-  try { saved = JSON.parse(localStorage.getItem('tsuzuri-backup') || 'null'); } catch {}
-  if (saved && saved.data && saved.data.rev === S.data.rev) {
-    $('notice-slot').innerHTML = `<div class="notice" style="margin-inline:16px"><span>保存していない変更がこのブラウザに残っています。</span><button class="btn primary" type="button" id="rs-yes">その変更を保存する</button><button class="btn ghost" type="button" id="rs-no">捨てる</button></div>`;
-    $('rs-yes').addEventListener('click', async () => { S.data = saved.data; S.dirty = true; if (await save()) { $('notice-slot').innerHTML = ''; toast('残っていた変更を保存しました'); route(); } });
-    $('rs-no').addEventListener('click', () => { try { localStorage.removeItem('tsuzuri-backup'); } catch {} $('notice-slot').innerHTML = ''; });
-  }
-  const h = decodeURIComponent(location.hash.slice(1));
-  if (h === 'new') return newPost();
-  if (h && S.data.posts.some(p => p.slug === h)) return openEditor(h);
-  S.view = 'list';
-  route();
+  applyHash();
 }
 start();

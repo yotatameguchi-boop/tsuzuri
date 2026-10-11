@@ -305,3 +305,30 @@ details.settings summary{cursor:pointer;padding:9px 0;font-size:13px;color:var(-
 .login input{border:1px solid var(--line);border-radius:6px;padding:10px 12px;background:var(--bg);font-size:16px;color:var(--ink)}
 .login .err{color:var(--ng);font-size:13.5px;min-height:1.5em}
 .btn.view{margin-left:4px}
+
+/* メンバー・自分の設定・アカウントメニュー */
+.manage{max-width:760px;margin:0 auto;padding-block:40px 80px}
+.manage h1{font-family:var(--serif);font-weight:800;font-size:28px;margin:0 0 6px}
+.manage .sub{color:var(--muted);margin:0 0 20px;font-size:13.5px}
+.manage .sec{font-size:15px;margin:36px 0 12px}
+.mlist{border-top:2px solid var(--ink)}
+.mrow{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.mrow .t{font-weight:700;flex:1;min-width:180px}
+.mrow .id{display:block;font-weight:400;font-size:12.5px;color:var(--muted);font-family:var(--mono)}
+.mrow time{color:var(--muted);font-size:12.5px;font-variant-numeric:tabular-nums}
+.mrow select,.invite-form select{border:1px solid var(--line);border-radius:6px;padding:6px 8px;background:var(--bg);color:var(--ink)}
+.invite-form{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.invite-form .err{flex-basis:100%}
+.notice .link{flex:1;min-width:240px;font-family:var(--mono);font-size:12.5px;border:1px solid var(--line);border-radius:6px;padding:7px 9px;background:var(--bg);color:var(--ink)}
+.stack{display:grid;gap:10px;max-width:420px}
+.stack .field{min-width:0}
+.err{color:var(--ng);font-size:13.5px;min-height:1.2em}
+.login .field{min-width:0}
+.login .field input{font-size:16px;padding:9px 11px}
+details.menu{position:relative}
+details.menu summary{list-style:none}
+details.menu summary::-webkit-details-marker{display:none}
+.menu-list{position:absolute;right:0;top:calc(100% + 6px);z-index:20;min-width:180px;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.14);padding:6px;display:grid}
+.menu-list a,.menu-list button{display:block;text-align:left;padding:8px 10px;border-radius:6px;border:0;background:none;color:var(--ink);text-decoration:none;font-size:13.5px;cursor:pointer}
+.menu-list a:hover,.menu-list button:hover{background:var(--bg-2)}
+#ed-note .notice{margin:0 0 10px}
