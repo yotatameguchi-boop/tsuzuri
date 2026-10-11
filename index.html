@@ -1,0 +1,695 @@
+<title>WP清書</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=M+PLUS+1+Code:wght@400;500&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Zen+Old+Mincho:wght@600;700&display=swap">
+<style>
+:root{
+  --bg:#f1f4f1;
+  --surface:#ffffff;
+  --ink:#1d2621;
+  --muted:#5d6b63;
+  --line:#d6ded8;
+  --accent:#2f6f4f;
+  --accent-ink:#ffffff;
+  --accent-soft:#e2eee7;
+  --rule:rgba(47,111,79,.09);
+  --focus:#2f6f4f;
+  --ok:#2f6f4f;
+  --sans:"Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP",system-ui,sans-serif;
+  --mono:"M PLUS 1 Code","SFMono-Regular",Menlo,Consolas,monospace;
+  --serif:"Zen Old Mincho","Hiragino Mincho ProN","Yu Mincho",serif;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --bg:#121714;--surface:#19201c;--ink:#e2e9e4;--muted:#93a39a;--line:#2b3530;
+    --accent:#7cc39d;--accent-ink:#0e1a13;--accent-soft:#1e3128;--rule:rgba(124,195,157,.07);--focus:#7cc39d;--ok:#7cc39d;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#121714;--surface:#19201c;--ink:#e2e9e4;--muted:#93a39a;--line:#2b3530;
+  --accent:#7cc39d;--accent-ink:#0e1a13;--accent-soft:#1e3128;--rule:rgba(124,195,157,.07);--focus:#7cc39d;--ok:#7cc39d;
+}
+html,body{height:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.6}
+*{box-sizing:border-box}
+button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+
+.app{height:100%;display:flex;flex-direction:column;padding-inline:16px;max-width:1500px;margin:0 auto}
+header.top{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding-block:14px 12px}
+.brand{display:flex;align-items:baseline;gap:12px;min-width:0}
+.brand h1{font-family:var(--serif);font-size:24px;font-weight:700;margin:0;letter-spacing:.04em}
+.brand p{margin:0;color:var(--muted);font-size:12.5px}
+.top .actions{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:7px 12px;cursor:pointer;font-size:13px;white-space:nowrap}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:700;padding-inline:16px}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn.danger-armed{border-color:#c0492b;color:#c0492b}
+
+.titlebar{display:flex;align-items:center;gap:10px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);margin-bottom:12px;min-width:0}
+.titlebar .lbl{font-size:11px;letter-spacing:.12em;color:var(--muted);flex:none}
+.titlebar .ttl{font-weight:700;font-size:15px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.titlebar .ttl.empty{color:var(--muted);font-weight:400}
+
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);flex:none;overflow-x:auto}
+.tab{background:none;border:0;border-bottom:2px solid transparent;padding:8px 14px;cursor:pointer;color:var(--muted);font-size:13px;white-space:nowrap;margin-bottom:-1px}
+.tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent);font-weight:700}
+.only-narrow{display:none}
+
+main.panes{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;padding-bottom:16px}
+.pane{min-height:0;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+
+.toolbar{display:flex;flex-wrap:wrap;gap:4px;padding:8px;border-bottom:1px solid var(--line)}
+.tool{border:1px solid transparent;background:none;border-radius:5px;padding:4px 8px;font-size:12.5px;cursor:pointer;color:var(--ink)}
+.tool:hover{background:var(--accent-soft);border-color:var(--line)}
+.tool b{font-weight:700}
+.tool .mk{background:linear-gradient(transparent 55%,#ffe58a 55%);color:inherit}
+.sep{width:1px;background:var(--line);margin:2px 4px}
+
+#src{flex:1;min-height:0;width:100%;resize:none;border:0;padding:16px 18px;font-family:var(--mono);font-size:14px;line-height:28px;color:var(--ink);
+  background-color:var(--surface);
+  background-image:linear-gradient(to bottom,transparent 27px,var(--rule) 27px);
+  background-size:100% 28px;background-position:0 16px;background-attachment:local;tab-size:2}
+#src:focus{outline:none}
+.status{display:flex;gap:14px;flex-wrap:wrap;padding:6px 12px;border-top:1px solid var(--line);color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+.status strong{color:var(--ink);font-weight:500}
+
+.view{flex:1;min-height:0;overflow:auto}
+.view[hidden]{display:none!important}
+
+/* プレビューは公開後のブログ紙面を模すので常に明るい紙で表示する */
+.paper{background:#ffffff;color:#24292e;margin:16px;border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,.12);padding:32px clamp(18px,4vw,44px) 48px;font-family:var(--sans);font-size:15.5px;line-height:1.9}
+.paper .post-title{font-size:24px;line-height:1.5;margin:0 0 24px;padding-bottom:14px;border-bottom:1px solid #e3e6e8;text-wrap:balance}
+.paper h2{font-size:20px;line-height:1.5;margin:2em 0 .8em;padding:.5em .8em;background:#f2f5f3;border-left:5px solid #2f6f4f;text-wrap:balance}
+.paper h3{font-size:17.5px;margin:1.8em 0 .6em;padding-bottom:.3em;border-bottom:2px solid #dfe7e2;text-wrap:balance}
+.paper h4{font-size:16px;margin:1.5em 0 .5em}
+.paper p{margin:0 0 1.2em}
+.paper a{color:#1d63b8}
+.paper mark{padding:0 .1em;color:inherit}
+.paper code{font-family:var(--mono);font-size:.88em;background:#f1f3f4;padding:.1em .35em;border-radius:3px}
+.paper pre.wp-block-code{background:#1f2428;color:#e6edf3;padding:14px 16px;border-radius:6px;overflow-x:auto;font-size:13.5px;line-height:1.7}
+.paper pre.wp-block-code code{background:none;padding:0;color:inherit}
+.paper ul,.paper ol{margin:0 0 1.2em;padding-left:1.6em}
+.paper li ul,.paper li ol{margin:.2em 0}
+.paper blockquote{margin:0 0 1.2em;padding:.8em 1.2em;border-left:4px solid #c9d1cc;background:#f7f8f8;color:#4b5459}
+.paper blockquote p:last-child{margin-bottom:0}
+.paper figure{margin:0 0 1.4em}
+.paper figure img{display:block;max-width:100%;height:auto;margin:0 auto}
+.paper figcaption{font-size:13px;color:#6a737d;text-align:center;margin-top:.4em}
+.paper .img-missing{display:flex;align-items:center;justify-content:center;min-height:140px;border:2px dashed #c9d1cc;border-radius:6px;color:#6a737d;font-size:13px;padding:12px;text-align:center}
+.paper .wp-block-table{overflow-x:auto}
+.paper table{border-collapse:collapse;width:100%;font-size:14px}
+.paper th,.paper td{border:1px solid #d6dbde;padding:.5em .8em;text-align:left;vertical-align:top}
+.paper th{background:#f2f5f3}
+.paper hr{border:0;border-top:1px solid #d6dbde;margin:2em auto;width:100%}
+.paper .wp-block-group{margin:0 0 1.4em}
+.paper .wp-block-group p:last-child{margin-bottom:0}
+.paper .wp-block-buttons{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin:0 0 1.4em}
+.paper .wp-block-button__link{display:inline-block;background:#2f6f4f;color:#fff;text-decoration:none;padding:.7em 1.8em;border-radius:999px;font-weight:700}
+
+.codeview{padding:16px;display:flex;flex-direction:column;gap:12px;min-height:100%}
+.steps{margin:0;padding:12px 14px 12px 34px;background:var(--accent-soft);border-radius:8px;font-size:13px;line-height:1.8}
+.steps kbd{font-family:var(--mono);font-size:12px;border:1px solid var(--line);background:var(--surface);border-radius:4px;padding:0 5px}
+#out{flex:1;min-height:260px;width:100%;resize:vertical;font-family:var(--mono);font-size:12.5px;line-height:1.6;border:1px solid var(--line);border-radius:8px;padding:12px;background:var(--bg);color:var(--ink)}
+
+.help{padding:16px 18px 32px;max-width:72ch}
+.help h2{font-size:15px;margin:22px 0 8px}
+.help h2:first-child{margin-top:4px}
+.help p{color:var(--muted);margin:0 0 10px}
+.help .rows{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.help .rows > div{padding:7px 10px;border-top:1px solid var(--line);font-size:13px}
+.help .rows > div:nth-child(-n+2){border-top:0}
+.help .rows > div:nth-child(odd){font-family:var(--mono);font-size:12.5px;background:var(--bg);white-space:pre-wrap;word-break:break-word}
+
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%) translateY(20px);background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:999px;font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;z-index:10;max-width:calc(100% - 32px)}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+@media (prefers-reduced-motion: reduce){.toast{transition:none}}
+
+@media (max-width: 860px){
+  .only-narrow{display:inline-block}
+  main.panes{grid-template-columns:minmax(0,1fr)}
+  .app[data-tab="write"] .pane.right{display:none}
+  .app:not([data-tab="write"]) .pane.left{display:none}
+  .brand p{display:none}
+  .tabs{margin-bottom:12px}
+  .pane.right .tabs{display:none}
+}
+@media (min-width: 861px){
+  .tabs.global{display:none}
+}
+</style>
+
+<div class="app" id="app" data-tab="preview">
+  <header class="top">
+    <div class="brand">
+      <h1>WP清書</h1>
+      <p>Markdownで書いて、WordPressのブロックにして貼る</p>
+    </div>
+    <div class="actions">
+      <button class="btn" id="btn-sample" type="button">サンプルを読み込む</button>
+      <button class="btn" id="btn-new" type="button">新規</button>
+      <button class="btn" id="btn-title" type="button">タイトルをコピー</button>
+      <button class="btn primary" id="btn-copy" type="button">本文をWP用にコピー</button>
+    </div>
+  </header>
+
+  <div class="titlebar"><span class="lbl">タイトル</span><span class="ttl empty" id="ttl">1行目を「# タイトル」にすると、ここに入ります</span></div>
+
+  <div class="tabs global" role="tablist" aria-label="表示切り替え">
+    <button class="tab" role="tab" data-tab="write" type="button">書く</button>
+    <button class="tab" role="tab" data-tab="preview" type="button">プレビュー</button>
+    <button class="tab" role="tab" data-tab="code" type="button">WPに貼る</button>
+    <button class="tab" role="tab" data-tab="help" type="button">記法</button>
+  </div>
+
+  <main class="panes">
+    <section class="pane left" aria-label="原稿">
+      <div class="toolbar" id="toolbar">
+        <button class="tool" type="button" data-act="h2" title="大見出し">見出し2</button>
+        <button class="tool" type="button" data-act="h3" title="小見出し">見出し3</button>
+        <span class="sep"></span>
+        <button class="tool" type="button" data-act="bold" title="太字 (⌘B / Ctrl+B)"><b>太字</b></button>
+        <button class="tool" type="button" data-act="mark" title="マーカー (⌘M / Ctrl+M)"><span class="mk">マーカー</span></button>
+        <button class="tool" type="button" data-act="link" title="リンク (⌘K / Ctrl+K)">リンク</button>
+        <span class="sep"></span>
+        <button class="tool" type="button" data-act="list">箇条書き</button>
+        <button class="tool" type="button" data-act="box">ボックス</button>
+        <button class="tool" type="button" data-act="image">画像</button>
+        <button class="tool" type="button" data-act="button">ボタン</button>
+        <button class="tool" type="button" data-act="table">表</button>
+        <button class="tool" type="button" data-act="hr">区切り線</button>
+      </div>
+      <textarea id="src" spellcheck="false" aria-label="原稿（Markdown）"></textarea>
+      <div class="status" id="status"></div>
+    </section>
+
+    <section class="pane right" aria-label="結果">
+      <div class="tabs" role="tablist" aria-label="結果の表示">
+        <button class="tab" role="tab" data-tab="preview" type="button">プレビュー</button>
+        <button class="tab" role="tab" data-tab="code" type="button">WPに貼る</button>
+        <button class="tab" role="tab" data-tab="help" type="button">記法</button>
+      </div>
+      <div class="view" id="view-preview"><article class="paper" id="paper"></article></div>
+      <div class="view" id="view-code" hidden>
+        <div class="codeview">
+          <ol class="steps">
+            <li>上の「本文をWP用にコピー」を押す</li>
+            <li>WordPressの投稿画面で、本文の空の段落をクリック</li>
+            <li><kbd>⌘V</kbd> / <kbd>Ctrl+V</kbd> で貼り付ける。見出し・ボックス・表がそのままブロックになります</li>
+            <li>画像はWordPress側の「アップロード」から入れてください（空の画像ブロックが置いてあります）</li>
+          </ol>
+          <textarea id="out" readonly aria-label="WordPressブロックのコード"></textarea>
+        </div>
+      </div>
+      <div class="view" id="view-help" hidden><div class="help" id="help"></div></div>
+    </section>
+  </main>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+/* ===== 変換器: 原稿(拡張Markdown) → WordPressブロック ===== */
+/*CONVERTER_START*/
+const BOX = {
+  point:   { label: 'ポイント', bg: '#edf6f0', border: '#3f7d5a' },
+  info:    { label: 'メモ',     bg: '#edf2fa', border: '#3b6fb6' },
+  warn:    { label: '注意',     bg: '#fff5e3', border: '#d08a1c' },
+  summary: { label: 'まとめ',   bg: '#f3f0f9', border: '#6b52a8' },
+};
+const BOX_ALIAS = {
+  point: 'point', ポイント: 'point',
+  info: 'info', note: 'info', memo: 'info', メモ: 'info', 補足: 'info',
+  warn: 'warn', warning: 'warn', 注意: 'warn',
+  summary: 'summary', まとめ: 'summary',
+};
+const MARKER = '#ffe58a';
+
+const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const escAttr = s => esc(s).replace(/"/g, '&quot;');
+
+function inline(src) {
+  const codes = [];
+  let s = src.replace(/`([^`]+)`/g, (_, c) => { codes.push(c); return `\u0000${codes.length - 1}\u0000`; });
+  s = esc(s);
+  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, t, u) => `<a href="${u.replace(/"/g, '&quot;')}">${t}</a>`);
+  s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/(^|[^*])\*([^*\s](?:[^*]*?[^*\s])?)\*(?!\*)/g, '$1<em>$2</em>');
+  s = s.replace(/~~(.+?)~~/g, '<s>$1</s>');
+  s = s.replace(/==(.+?)==/g, `<mark style="background-color:${MARKER}" class="has-inline-color">$1</mark>`);
+  s = s.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${esc(codes[+i])}</code>`);
+  return s.replace(/\n/g, '<br>');
+}
+
+const block = (name, attrs, html) => {
+  const a = attrs ? ' ' + JSON.stringify(attrs) : '';
+  return `<!-- wp:${name}${a} -->\n${html}\n<!-- /wp:${name} -->`;
+};
+
+const paragraph = text => block('paragraph', null, `<p>${inline(text)}</p>`);
+
+function heading(level, text) {
+  return block('heading', level === 2 ? null : { level }, `<h${level} class="wp-block-heading">${inline(text)}</h${level}>`);
+}
+
+function image(alt, url, caption) {
+  if (!url) return block('image', null, `<figure class="wp-block-image"><img alt="${escAttr(alt)}"/></figure>`);
+  const cap = caption ? `<figcaption class="wp-element-caption">${inline(caption)}</figcaption>` : '';
+  return block('image', null, `<figure class="wp-block-image"><img src="${escAttr(url)}" alt="${escAttr(alt)}"/>${cap}</figure>`);
+}
+
+function buttons(list) {
+  const inner = list.map(([t, u]) => block('button', null,
+    `<div class="wp-block-button"><a class="wp-block-button__link wp-element-button" href="${escAttr(u)}">${inline(t)}</a></div>`)).join('\n\n');
+  return block('buttons', null, `<div class="wp-block-buttons">${inner}</div>`);
+}
+
+function code(text) {
+  return block('code', null, `<pre class="wp-block-code"><code>${esc(text)}</code></pre>`);
+}
+
+const separator = () => block('separator', null, '<hr class="wp-block-separator has-alpha-channel-opacity"/>');
+
+function splitRow(line) {
+  return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+}
+function table(head, rows) {
+  const th = `<thead><tr>${head.map(c => `<th>${inline(c)}</th>`).join('')}</tr></thead>`;
+  const tb = `<tbody>${rows.map(r => `<tr>${head.map((_, i) => `<td>${inline(r[i] || '')}</td>`).join('')}</tr>`).join('')}</tbody>`;
+  return block('table', null, `<figure class="wp-block-table"><table class="has-fixed-layout">${th}${tb}</table></figure>`);
+}
+
+function list(items) {
+  const root = { ordered: items[0].ordered, children: [] };
+  const stack = [{ indent: -1, node: root }];
+  for (const it of items) {
+    while (stack.length > 1 && it.indent <= stack[stack.length - 1].indent) stack.pop();
+    const parent = stack[stack.length - 1].node;
+    let target = root;
+    if (parent !== root) target = parent.sub || (parent.sub = { ordered: it.ordered, children: [] });
+    const item = { text: it.text };
+    target.children.push(item);
+    stack.push({ indent: it.indent, node: item });
+  }
+  const render = l => {
+    const tag = l.ordered ? 'ol' : 'ul';
+    const lis = l.children.map(c => block('list-item', null, `<li>${inline(c.text)}${c.sub ? render(c.sub) : ''}</li>`)).join('\n\n');
+    return block('list', l.ordered ? { ordered: true } : null, `<${tag} class="wp-block-list">${lis}</${tag}>`);
+  };
+  return render(root);
+}
+
+function quote(inner) {
+  return block('quote', null, `<blockquote class="wp-block-quote">${inner.join('\n\n')}</blockquote>`);
+}
+
+function box(kindRaw, title, inner) {
+  const kind = BOX_ALIAS[kindRaw] || BOX_ALIAS[kindRaw.toLowerCase()] || 'info';
+  const b = BOX[kind];
+  const label = title || (BOX_ALIAS[kindRaw] || BOX_ALIAS[kindRaw.toLowerCase()] ? b.label : kindRaw);
+  const attrs = { style: {
+    border: { width: '2px', radius: '10px', color: b.border },
+    spacing: { padding: { top: '1.2em', right: '1.4em', bottom: '1.2em', left: '1.4em' } },
+    color: { background: b.bg },
+  } };
+  const style = `border-color:${b.border};border-width:2px;border-radius:10px;background-color:${b.bg};padding-top:1.2em;padding-right:1.4em;padding-bottom:1.2em;padding-left:1.4em`;
+  const head = paragraph(`**${label}**`);
+  return block('group', attrs, `<div class="wp-block-group has-border-color has-background" style="${style}">${[head, ...inner].join('\n\n')}</div>`);
+}
+
+const RE = {
+  fence: /^```/,
+  boxOpen: /^:::\s*([^\s:]+)\s*(.*)$/,
+  boxClose: /^:::\s*$/,
+  heading: /^(#{1,4})\s+(.+)$/,
+  hr: /^\s*(-{3,}|\*{3,}|_{3,})\s*$/,
+  tableRow: /^\s*\|/,
+  tableSep: /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/,
+  quote: /^>\s?/,
+  listItem: /^(\s*)([-*+]|\d+[.)])\s+(.*)$/,
+  image: /^!\[([^\]]*)\]\(([^)\s]*)(?:\s+"([^"]*)")?\)\s*$/,
+  button: /^\[\[(.+?)\]\]\((\S+?)\)\s*$/,
+};
+
+function startsBlock(lines, i) {
+  const l = lines[i];
+  return RE.fence.test(l) || RE.boxOpen.test(l) || RE.boxClose.test(l) || RE.heading.test(l) || RE.hr.test(l) ||
+    RE.quote.test(l) || RE.listItem.test(l) || RE.image.test(l) || RE.button.test(l) ||
+    (RE.tableRow.test(l) && i + 1 < lines.length && RE.tableSep.test(lines[i + 1]));
+}
+
+function parseBlocks(lines) {
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    let m;
+    if (/^\s*$/.test(line)) { i++; continue; }
+
+    if (RE.fence.test(line)) {
+      const buf = []; i++;
+      while (i < lines.length && !/^```\s*$/.test(lines[i])) buf.push(lines[i++]);
+      i++;
+      out.push(code(buf.join('\n')));
+      continue;
+    }
+    if ((m = line.match(RE.boxOpen))) {
+      const buf = []; let depth = 1; i++;
+      while (i < lines.length) {
+        if (RE.boxClose.test(lines[i])) { if (--depth === 0) break; }
+        else if (RE.boxOpen.test(lines[i])) depth++;
+        buf.push(lines[i++]);
+      }
+      i++;
+      out.push(box(m[1], m[2].trim(), parseBlocks(buf)));
+      continue;
+    }
+    if (RE.boxClose.test(line)) { i++; continue; }
+    if ((m = line.match(RE.heading))) {
+      out.push(heading(Math.max(2, m[1].length), m[2].trim()));
+      i++; continue;
+    }
+    if (RE.hr.test(line)) { out.push(separator()); i++; continue; }
+    if (RE.tableRow.test(line) && i + 1 < lines.length && RE.tableSep.test(lines[i + 1])) {
+      const head = splitRow(line); i += 2;
+      const rows = [];
+      while (i < lines.length && RE.tableRow.test(lines[i])) rows.push(splitRow(lines[i++]));
+      out.push(table(head, rows));
+      continue;
+    }
+    if (RE.quote.test(line)) {
+      const buf = [];
+      while (i < lines.length && RE.quote.test(lines[i])) buf.push(lines[i++].replace(RE.quote, ''));
+      out.push(quote(parseBlocks(buf)));
+      continue;
+    }
+    if (RE.listItem.test(line)) {
+      const items = [];
+      while (i < lines.length) {
+        const lm = lines[i].match(RE.listItem);
+        if (lm) {
+          items.push({ indent: lm[1].replace(/\t/g, '  ').length, ordered: /\d/.test(lm[2]), text: lm[3] });
+        } else if (/^\s+\S/.test(lines[i]) && items.length) {
+          items[items.length - 1].text += '\n' + lines[i].trim();
+        } else break;
+        i++;
+      }
+      out.push(list(items));
+      continue;
+    }
+    if ((m = line.match(RE.image))) {
+      out.push(image(m[1], m[2], m[3]));
+      i++; continue;
+    }
+    if (RE.button.test(line)) {
+      const btns = [];
+      while (i < lines.length && (m = lines[i].match(RE.button))) { btns.push([m[1], m[2]]); i++; }
+      out.push(buttons(btns));
+      continue;
+    }
+    const buf = [line]; i++;
+    while (i < lines.length && !/^\s*$/.test(lines[i]) && !startsBlock(lines, i)) buf.push(lines[i++]);
+    out.push(paragraph(buf.join('\n')));
+  }
+  return out;
+}
+
+function convert(text) {
+  const lines = text.replace(/\r\n?/g, '\n').split('\n');
+  let title = '';
+  const first = lines.findIndex(l => l.trim() !== '');
+  if (first >= 0) {
+    const m = lines[first].match(/^#\s+(.+)$/);
+    if (m) { title = m[1].trim(); lines.splice(first, 1); }
+  }
+  const blocks = parseBlocks(lines);
+  return { title, blocks, html: blocks.join('\n\n') };
+}
+/*CONVERTER_END*/
+
+/* ===== 画面 ===== */
+const SAMPLE = `# インターン3か月目で身についた、議事録を10分で仕上げる手順
+
+こんにちは、マーケティングチームでインターンをしている学生です。
+入社した頃は、1時間の会議の議事録に1時間以上かかっていました。
+
+今は**会議終了から10分**で共有できています。やり方を変えた3つの点を紹介します。
+
+:::point この記事でわかること
+- 会議の前に「型」を用意しておく理由
+- その場で書くのは ==決定事項と担当者だけ== でいい
+- 共有前に確認する3項目
+:::
+
+## 1. 会議の前に型を用意しておく
+
+議事録が遅くなる一番の原因は、会議のあとに「どう書くか」から考え始めることでした。
+今は会議の招待が来た時点で、次の型を作っておきます。
+
+| 項目 | 書く内容 |
+| --- | --- |
+| 目的 | 招待文から1行で写す |
+| 決定事項 | 会議中に埋める |
+| 担当と期限 | 会議中に埋める |
+| 保留 | 次回に持ち越す論点 |
+
+![議事録の型をNotionに置いた画面]( "チームで使っている型")
+
+## 2. その場で書くのは決定事項と担当者だけ
+
+発言を全部メモしようとすると、話についていけなくなります。
+書くのは次の2つに絞りました。
+
+1. 何が決まったか
+2. 誰が・いつまでにやるか
+   - 期限が出なかったら、その場で「いつまでにしますか」と聞く
+
+:::注意
+録音を文字起こしツールにかける場合は、社外の人が参加する会議では事前に許可を取ってください。
+:::
+
+## 3. 共有前に確認する3項目
+
+> 議事録は「読んだ人が次に動けるか」で判断する。
+> — メンターの山田さん
+
+- 決定事項が文として完結しているか
+- 担当者の名前が全部入っているか
+- 期限が日付になっているか（「来週中」はNG）
+
+---
+
+:::まとめ
+型を先に作り、その場では決定事項と担当だけ書き、最後に3項目を確認する。
+これだけで、議事録はかなり速くなります。
+:::
+
+[[インターン募集ページを見る]](https://example.com/recruit)
+`;
+
+const HELP = [
+  ['基本', 'タイトル・見出し・文字の装飾', [
+    ['# 記事タイトル', '1行目だけ。タイトル欄に入り、本文には含めません'],
+    ['## 見出し', '大見出し（H2）'],
+    ['### 小見出し', '小見出し（H3）。#### でH4'],
+    ['**太字**', '太字'],
+    ['==マーカー==', '黄色のマーカー'],
+    ['*斜体*　~~取り消し~~', '斜体・取り消し線'],
+    ['[文字](https://...)', 'リンク'],
+    ['`コード`', '文中のコード'],
+  ]],
+  ['段落と改行', '改行1回は段落内の改行、空行で次の段落になります', [
+    ['1文目\n2文目', '同じ段落の中で改行'],
+    ['1文目\n\n2文目', '別々の段落'],
+  ]],
+  ['リスト・引用・区切り', '', [
+    ['- 項目\n  - 入れ子', '箇条書き。スペース2つで入れ子'],
+    ['1. 手順', '番号付きリスト'],
+    ['> 引用文', '引用'],
+    ['---', '区切り線'],
+  ]],
+  ['ボックス', '「:::種類」で始めて「:::」で閉じます。種類の後ろに見出しを書けます', [
+    [':::ポイント 見出し\n本文\n:::', '緑のボックス（point でも可）'],
+    [':::メモ\n本文\n:::', '青のボックス（補足・note でも可）'],
+    [':::注意\n本文\n:::', 'オレンジのボックス（warn でも可）'],
+    [':::まとめ\n本文\n:::', '紫のボックス（summary でも可）'],
+  ]],
+  ['画像・ボタン・表', '', [
+    ['![説明](画像のURL "キャプション")', '画像。URLはWordPressのメディアからコピー'],
+    ['![説明]()', 'URLなし。WordPress上でアップロードする空の画像ブロックになります'],
+    ['[[ボタンの文字]](https://...)', 'ボタン。続けて書くと横に並びます'],
+    ['| 見出し | 見出し |\n| --- | --- |\n| 値 | 値 |', '表'],
+    ['```\nコード\n```', 'コードブロック'],
+  ]],
+];
+
+const $ = id => document.getElementById(id);
+const src = $('src'), out = $('out'), paper = $('paper'), app = $('app');
+const STORE = 'wp-seisho-draft';
+let current = { title: '', html: '', blocks: [] };
+
+function store(get, val) {
+  try { return get ? localStorage.getItem(STORE) : localStorage.setItem(STORE, val); } catch { return null; }
+}
+
+function render() {
+  current = convert(src.value);
+  out.value = current.html;
+  const ttl = $('ttl');
+  ttl.textContent = current.title || '1行目を「# タイトル」にすると、ここに入ります';
+  ttl.classList.toggle('empty', !current.title);
+
+  let body = current.html.replace(/<!--[\s\S]*?-->/g, '');
+  body = body.replace(/<figure class="wp-block-image"><img alt="([^"]*)"\/><\/figure>/g,
+    (_, alt) => `<figure class="wp-block-image"><div class="img-missing">画像をWordPressでアップロード${alt ? '：' + alt : ''}</div></figure>`);
+  paper.innerHTML = (current.title ? `<h1 class="post-title">${esc(current.title)}</h1>` : '') + body;
+
+  const text = paper.textContent.replace(/\s/g, '');
+  const h = current.blocks.filter(b => b.startsWith('<!-- wp:heading')).length;
+  const imgs = current.blocks.filter(b => b.startsWith('<!-- wp:image')).length;
+  $('status').innerHTML =
+    `<span>本文 <strong>${text.length.toLocaleString()}</strong> 字</span>` +
+    `<span>見出し <strong>${h}</strong></span>` +
+    `<span>画像 <strong>${imgs}</strong></span>` +
+    `<span>ブロック <strong>${current.blocks.length}</strong></span>` +
+    `<span>下書きはこのブラウザに自動保存</span>`;
+}
+
+let timer;
+src.addEventListener('input', () => {
+  clearTimeout(timer);
+  timer = setTimeout(() => { render(); store(false, src.value); }, 120);
+});
+
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toast.t);
+  toast.t = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+async function copy(text, okMsg, fallbackEl) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(okMsg);
+  } catch {
+    if (fallbackEl) { setTab('code'); fallbackEl.focus(); fallbackEl.select(); }
+    toast('自動コピーできませんでした。選択された文字を ⌘C / Ctrl+C でコピーしてください');
+  }
+}
+
+$('btn-copy').addEventListener('click', () => {
+  render();
+  if (!current.html) { toast('本文がまだありません'); return; }
+  copy(current.html, `本文をコピーしました（${current.blocks.length}ブロック）。WordPressの本文に貼り付けてください`, out);
+});
+$('btn-title').addEventListener('click', () => {
+  if (!current.title) { toast('1行目を「# タイトル」にするとコピーできます'); return; }
+  copy(current.title, 'タイトルをコピーしました');
+});
+$('btn-sample').addEventListener('click', () => {
+  src.value = SAMPLE; render(); store(false, src.value); toast('サンプル記事を読み込みました');
+});
+const btnNew = $('btn-new');
+btnNew.addEventListener('click', () => {
+  if (!btnNew.classList.contains('danger-armed') && src.value.trim()) {
+    btnNew.classList.add('danger-armed');
+    btnNew.textContent = 'もう一度押すと消去';
+    clearTimeout(btnNew.t);
+    btnNew.t = setTimeout(() => { btnNew.classList.remove('danger-armed'); btnNew.textContent = '新規'; }, 3000);
+    return;
+  }
+  btnNew.classList.remove('danger-armed'); btnNew.textContent = '新規';
+  src.value = '# '; render(); store(false, src.value); src.focus();
+  src.setSelectionRange(2, 2);
+});
+
+/* タブ */
+function setTab(name) {
+  if (name === 'write' && window.matchMedia('(min-width: 861px)').matches) name = 'preview';
+  app.dataset.tab = name;
+  const view = name === 'write' ? 'preview' : name;
+  for (const v of ['preview', 'code', 'help']) $('view-' + v).hidden = v !== view;
+  document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.tab === name)));
+}
+document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => setTab(t.dataset.tab)));
+
+/* ツールバー */
+function wrap(before, after, ph) {
+  const s = src.selectionStart, e = src.selectionEnd;
+  const sel = src.value.slice(s, e) || ph;
+  src.setRangeText(before + sel + after, s, e, 'end');
+  src.setSelectionRange(s + before.length, s + before.length + sel.length);
+}
+function insertBlock(text, selStart, selLen) {
+  const s = src.selectionStart;
+  const v = src.value;
+  const pre = s === 0 || v[s - 1] === '\n' ? (s > 1 && v[s - 2] !== '\n' && s !== 0 ? '\n' : '') : '\n\n';
+  src.setRangeText(pre + text + '\n', s, src.selectionEnd, 'end');
+  if (selStart != null) src.setSelectionRange(s + pre.length + selStart, s + pre.length + selStart + selLen);
+}
+function linePrefix(prefix) {
+  const s = src.selectionStart;
+  const ls = src.value.lastIndexOf('\n', s - 1) + 1;
+  let le = src.value.indexOf('\n', s); if (le < 0) le = src.value.length;
+  const line = src.value.slice(ls, le).replace(/^#{1,4}\s+/, '');
+  src.setRangeText(prefix + line, ls, le, 'end');
+}
+const ACTS = {
+  h2: () => linePrefix('## '),
+  h3: () => linePrefix('### '),
+  bold: () => wrap('**', '**', '太字'),
+  mark: () => wrap('==', '==', 'マーカー'),
+  link: () => {
+    const s = src.selectionStart, e = src.selectionEnd;
+    const sel = src.value.slice(s, e) || 'リンクの文字';
+    src.setRangeText(`[${sel}](https://)`, s, e, 'end');
+    const u = s + sel.length + 3;
+    src.setSelectionRange(u, u + 8);
+  },
+  list: () => insertBlock('- 項目1\n- 項目2\n- 項目3', 2, 3),
+  box: () => insertBlock(':::ポイント\nここに本文\n:::', 9, 5),
+  image: () => insertBlock('![画像の説明]( "キャプション")', 2, 5),
+  button: () => insertBlock('[[ボタンの文字]](https://)', 2, 6),
+  table: () => insertBlock('| 項目 | 内容 |\n| --- | --- |\n| A | 説明 |\n| B | 説明 |', 2, 2),
+  hr: () => insertBlock('---'),
+};
+$('toolbar').addEventListener('click', e => {
+  const b = e.target.closest('[data-act]');
+  if (!b) return;
+  src.focus();
+  ACTS[b.dataset.act]();
+  src.dispatchEvent(new Event('input'));
+});
+src.addEventListener('keydown', e => {
+  const mod = e.metaKey || e.ctrlKey;
+  if (mod && !e.shiftKey && !e.altKey) {
+    const k = e.key.toLowerCase();
+    const act = { b: 'bold', m: 'mark', k: 'link' }[k];
+    if (act) { e.preventDefault(); ACTS[act](); src.dispatchEvent(new Event('input')); return; }
+  }
+  if (e.key === 'Tab' && !e.isComposing) {
+    e.preventDefault();
+    const s = src.selectionStart;
+    const ls = src.value.lastIndexOf('\n', s - 1) + 1;
+    if (e.shiftKey) {
+      if (src.value.startsWith('  ', ls)) { src.setRangeText('', ls, ls + 2, 'preserve'); src.setSelectionRange(Math.max(ls, s - 2), Math.max(ls, s - 2)); }
+    } else {
+      src.setRangeText('  ', ls, ls, 'preserve'); src.setSelectionRange(s + 2, s + 2);
+    }
+    src.dispatchEvent(new Event('input'));
+  }
+});
+
+/* 記法ヘルプ */
+$('help').innerHTML = HELP.map(([h, note, rows]) =>
+  `<h2>${h}</h2>${note ? `<p>${note}</p>` : ''}<div class="rows">${rows.map(([a, b]) => `<div>${esc(a)}</div><div>${b}</div>`).join('')}</div>`
+).join('') + `<h2>ショートカット</h2><div class="rows"><div>⌘B / Ctrl+B</div><div>太字</div><div>⌘M / Ctrl+M</div><div>マーカー</div><div>⌘K / Ctrl+K</div><div>リンク</div><div>Tab / Shift+Tab</div><div>行の字下げ（リストの入れ子）</div></div>`;
+
+src.value = store(true) || SAMPLE;
+setTab(window.matchMedia('(min-width: 861px)').matches ? 'preview' : 'write');
+render();
+</script>
