@@ -325,8 +325,61 @@ function parse(lines, ctx) {
   return out.join('\n');
 }
 
+
+/* ---- 原稿の先頭の設定（--- で挟む）。メディア・デザイン・色・カテゴリなどを原稿の中で切り替えられる ----
+   ---
+   メディア: あしかもメディア
+   デザイン: ポップ
+   色: 緑
+   ---                                                                                       */
+const FM_KEYS = {
+  media: 'media', メディア: 'media', theme: 'theme', design: 'theme', デザイン: 'theme', color: 'color', 色: 'color',
+  category: 'category', カテゴリ: 'category', カテゴリー: 'category', parent: 'parent', 親: 'parent', 親の記事: 'parent',
+  order: 'order', 並び順: 'order', visibility: 'visibility', 読める人: 'visibility', 公開範囲: 'visibility',
+  date: 'date', 日付: 'date', slug: 'slug', url: 'slug', URL: 'slug',
+};
+export const THEME_KEYS = { standard: 'standard', 標準: 'standard', pop: 'pop', ポップ: 'pop', magazine: 'magazine', マガジン: 'magazine', natural: 'natural', ナチュラル: 'natural', simple: 'simple', シンプル: 'simple', tech: 'tech', テック: 'tech' };
+export const COLOR_KEYS = { blue: 'blue', 青: 'blue', red: 'red', 赤: 'red', green: 'green', 緑: 'green', orange: 'orange', 橙: 'orange', オレンジ: 'orange', purple: 'purple', 紫: 'purple', teal: 'teal', 青緑: 'teal', ink: 'ink', black: 'ink', 黒: 'ink' };
+
+function frontMatter(body) {
+  const text = String(body || '');
+  const m = text.match(/^\uFEFF?---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/);
+  if (!m) return { meta: {}, body: text, raw: '' };
+  const meta = {};
+  for (const line of m[1].split(/\r?\n/)) {
+    const kv = line.match(/^\s*([^:：#]+?)\s*[:：]\s*(.*?)\s*$/);
+    if (!kv) continue;
+    const k = FM_KEYS[kv[1]] || FM_KEYS[kv[1].toLowerCase()];
+    if (k) meta[k] = kv[2].replace(/^["'「]|["'」]$/g, '');
+  }
+  /* 設定の言葉が1つも無ければ、ただの区切り線として扱う */
+  if (!Object.keys(meta).length) return { meta: {}, body: text, raw: '' };
+  return { meta, body: text.slice(m[0].length), raw: m[0] };
+}
+
+/* 先頭の設定を、記事の項目の値に直す（書けなかった値は無視する） */
+function resolveMeta(meta, { media = [], posts = [], selfId = null } = {}) {
+  const out = {};
+  const low = v => String(v || '').trim().toLowerCase();
+  if (meta.media) { const m = media.find(x => low(x.slug) === low(meta.media) || low(x.name) === low(meta.media) || x.id === meta.media); if (m) out.media = m.id; }
+  if (meta.theme !== undefined) out.theme = THEME_KEYS[meta.theme] || THEME_KEYS[low(meta.theme)] || null;
+  if (meta.color !== undefined) out.color = COLOR_KEYS[meta.color] || COLOR_KEYS[low(meta.color)] || null;
+  if (meta.category !== undefined) out.category = meta.category.slice(0, 40);
+  if (meta.visibility !== undefined) out.visibility = /^(members|メンバー|メンバーだけ|メンバー限定|限定|社内)/i.test(meta.visibility.trim()) ? 'members' : 'public';
+  if (meta.order !== undefined) { const n = Number(meta.order.normalize('NFKC')); out.order = meta.order.trim() === '' ? null : Number.isFinite(n) ? n : undefined; if (out.order === undefined) delete out.order; }
+  if (meta.parent !== undefined) {
+    const v = meta.parent.trim();
+    const p = v && posts.find(x => x.id !== selfId && (x.title === v || x.slug === v));
+    out.parent = p ? p.id : null;
+  }
+  if (meta.date) { const d = meta.date.normalize('NFKC').match(/^(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})/); if (d) out.date = `${d[1]}-${d[2].padStart(2, '0')}-${d[3].padStart(2, '0')}`; }
+  if (meta.slug && /^[A-Za-z0-9._~-]{1,80}$/.test(meta.slug.trim())) out.slug = meta.slug.trim();
+  return out;
+}
+
 function renderBody(body, posts, resolve, href) {
   const ctx = makeCtx(posts, resolve, href);
+  body = frontMatter(body).body;
   const lines = [];
   let fence = false;
   for (const l of String(body || '').replace(/\r\n?/g, '\n').split('\n')) {
@@ -344,7 +397,7 @@ function renderBody(body, posts, resolve, href) {
 
 /* 検索用の地の文（記法を取り除いた全文） */
 function plainText(body) {
-  return String(body || '').replace(/^```.*$/gm, ' ').replace(/^:::\s*\S*\s*(.*)$/gm, ' $1 ').replace(/^@\s+/gm, '')
+  return String(frontMatter(body).body).replace(/^```.*$/gm, ' ').replace(/^:::\s*\S*\s*(.*)$/gm, ' $1 ').replace(/^@\s+/gm, '')
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/\[\[([^\]]+)\]\](\([^)]*\))?/g, '$1').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
     .replace(/\{([^{}|]+)\|([^{}]+)\}/g, '$1（$2）').replace(/\[\^[^\]]+\]:?/g, '').replace(/^[#>|\s*-]+|[*=~`|$]/gm, ' ')
     .replace(/\s+/g, ' ').trim();
@@ -407,6 +460,7 @@ function evaluate(expr, vars) {
 
 /* 一覧や検索結果に出す抜粋。部品（::: 〜 :::）やコードの中身は使わず、地の文だけを拾う */
 function excerpt(body, n = 120) {
+  body = frontMatter(body).body;
   const out = [];
   let depth = 0, fence = false, mathBlock = false;
   for (const raw of String(body || '').split('\n')) {
@@ -424,4 +478,4 @@ function excerpt(body, n = 120) {
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/[*=~`]/g, '').slice(0, n);
 }
 
-export { plainText, excerpt, esc, safeUrl, inline, parse, renderBody, liveKinds, evaluate, LIVE_LABEL };
+export { frontMatter, resolveMeta, plainText, excerpt, esc, safeUrl, inline, parse, renderBody, liveKinds, evaluate, LIVE_LABEL };

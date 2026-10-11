@@ -318,9 +318,27 @@ test('複数のメディア：名前・色・URLのちがうメディアを1つ�
   assert.equal((await call('PUT', '/api/media/m2', { cookie: S.admin, body: { name: 'あしかもメディア', slug: 'ashikamo', theme: 'nope' } })).status, 200);
   assert.doesNotMatch((await call('GET', '/ashikamo/')).text, /Kiwi\+Maru/, '知らないひな形は標準になる');
 
+  /* 原稿の先頭（--- で挟む）で、メディア・デザイン・色・カテゴリを切り替える */
+  const fm = '---\nメディア: じもころ\nデザイン: ポップ\n色: 紫\nカテゴリ: お祭り\n並び順: ３\n---\n秋祭りの準備は2か月前から始まります。\n\n---\n\n区切り線のあと。';
+  const fmPut = await call('PUT', '/api/posts/f1', { cookie: S.admin, body: { post: { slug: 'aki-matsuri', title: '秋祭りの準備', body: fm, draft: false, media: 'm2' } } });
+  assert.equal(fmPut.status, 200);
+  assert.equal(fmPut.json.post.media, 'm3', '原稿の先頭の「メディア」が、記事の設定より優先される');
+  assert.equal(fmPut.json.post.category, 'お祭り');
+  assert.equal(fmPut.json.post.order, 3, '全角の数字も読める');
+  assert.equal(fmPut.json.post.theme, 'pop');
+  const fmPage = (await call('GET', '/jimocoro/aki-matsuri')).text;
+  assert.match(fmPage, /family=Zen\+Maru\+Gothic/, 'この記事だけデザインがポップになる');
+  assert.match(fmPage, /--blue:#6847b8/, 'この記事だけ色が紫になる');
+  assert.doesNotMatch(fmPage, /メディア: じもころ/, '先頭の設定は本文には出ない');
+  assert.match(fmPage, /<hr>/, '本文の中の --- は区切り線のまま');
+  assert.doesNotMatch((await call('GET', '/jimocoro/')).text, /Zen\+Maru\+Gothic/, 'メディアのトップはメディアのデザインのまま');
+  assert.equal((await call('GET', '/ashikamo/aki-matsuri')).status, 301, '前のメディアのURLは新しい場所へ案内する');
+
   await call('PUT', '/api/media/m3', { cookie: S.admin, body: { name: 'じもころ', slug: 'jimocoro', color: 'orange', visibility: 'members' } });
   assert.equal((await call('GET', '/jimocoro/')).status, 401, 'メンバーだけのメディア');
   assert.doesNotMatch((await call('GET', '/')).text, /じもころ/);
   assert.equal((await call('DELETE', '/api/media/m2', { cookie: S.admin })).status, 400, '記事があるメディアは消せない');
+  assert.equal((await call('DELETE', '/api/media/m3', { cookie: S.admin })).status, 400, '原稿の先頭で移した記事があるので消せない');
+  assert.equal((await call('DELETE', '/api/posts/f1', { cookie: S.admin, body: { baseRev: 1 } })).status, 200);
   assert.equal((await call('DELETE', '/api/media/m3', { cookie: S.admin })).status, 200);
 });

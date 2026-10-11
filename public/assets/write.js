@@ -1,5 +1,5 @@
 /* 書く人の画面（/write）。ログイン → 記事一覧 → 編集。管理者はメンバーも管理できる。 */
-import { esc, renderBody, liveKinds, excerpt } from './render.js';
+import { esc, renderBody, liveKinds, excerpt, frontMatter, resolveMeta } from './render.js';
 import { hydrate, hideTip } from './live.js';
 
 const $ = id => document.getElementById(id);
@@ -11,7 +11,7 @@ const readMin = body => Math.max(1, Math.round(String(body || '').replace(/\s/g,
 const isAdmin = () => S.me && S.me.role === 'admin';
 const canEdit = p => isAdmin() || !p.rev || p.author === S.me.id;
 const ROLE = { admin: '管理者', writer: '書き手', reader: '閲覧者' };
-const POST_FIELDS = ['slug', 'title', 'body', 'date', 'draft', 'category', 'parent', 'order', 'visibility', 'media'];
+const POST_FIELDS = ['slug', 'title', 'body', 'date', 'draft', 'category', 'parent', 'order', 'visibility', 'media', 'theme', 'color'];
 const pick = p => Object.fromEntries(POST_FIELDS.map(k => [k, p[k] ?? null]));
 const nextPath = () => { const n = new URLSearchParams(location.search).get('next'); return n && /^\/(?!\/)/.test(n) ? n : null; };
 
@@ -559,6 +559,7 @@ async function addMedia(file) {
 
 /* 「/」で呼び出す部品。name と keys で絞り込める */
 const PARTS = [
+  { g: '文章', ic: '⚙', name: '記事の設定（メディア・デザイン）', ds: '原稿の先頭に書くと、メディアやデザイン・色・カテゴリを切り替えられる', keys: 'settei media design theme color frontmatter meta medhia dezain', action: 'front' },
   { g: '文章', ic: 'H', name: '見出し', ds: '話の区切りに付ける大きな見出し', keys: 'midashi heading h2', text: '## 見出し', sel: '見出し' },
   { g: '文章', ic: 'h', name: '小見出し', ds: '見出しの中をさらに分ける', keys: 'komidashi h3', text: '### 小見出し', sel: '小見出し' },
   { g: '文章', ic: '・', name: '箇条書き', ds: '項目を並べる', keys: 'kajougaki list', text: '- 項目\n- 項目\n- 項目', sel: '項目' },
@@ -606,7 +607,7 @@ function renderEditor() {
       <label class="field">親の記事（章立て）<select id="ed-parent"><option value="">なし（いちばん上）</option>${parentOptions(p)}</select></label>
       <label class="field" style="flex:0 0 130px;min-width:0">並び順（小さいほど前）<input id="ed-order" type="number" step="any" value="${p.order ?? ''}" placeholder="空なら日付順"></label>
       <label class="field">読める人<select id="ed-vis"><option value="public"${p.visibility !== 'members' ? ' selected' : ''}>誰でも</option><option value="members"${p.visibility === 'members' ? ' selected' : ''}>ログインしたメンバーだけ</option></select></label>
-    </div><div class="set-grid">
+    </div><p class="sub" id="fm-note" hidden>原稿の先頭（--- で挟んだ部分）にも設定が書かれています。保存するときは、原稿の先頭の設定が優先されます。</p><div class="set-grid">
       <label class="field">記事のURLの末尾（半角英数とハイフン）<input id="ed-slug" value="${esc(p.slug)}"></label>
       <label class="field" style="flex:0 0 160px;min-width:0">日付<input id="ed-date" type="date" value="${esc(p.date || today())}"></label>
     </div><div class="set-grid">
@@ -648,8 +649,20 @@ function renderEditor() {
   setupEditorExtras(p, src, refresh);
   if (!p.title) $('ed-title').focus(); else src.focus();
 
+  /* 原稿の先頭の設定を読み、記事の項目と「記事の設定」欄に反映する */
+  const applyFront = () => {
+    const meta = frontMatter(src.value).meta;
+    const keys = Object.keys(meta);
+    Object.assign(p, resolveMeta(meta, { media: S.data.media, posts: S.data.posts, selfId: p.id }));
+    const set = (id, v) => { const el = $(id); if (el && v !== undefined && el.value !== String(v ?? '')) el.value = v ?? ''; };
+    set('ed-media', p.media); set('ed-cat', p.category); set('ed-order', p.order); set('ed-vis', p.visibility); set('ed-date', p.date); set('ed-slug', p.slug); set('ed-parent', p.parent || '');
+    const note = $('fm-note');
+    if (note) note.hidden = !keys.length;
+  };
+  applyFront();
   src.addEventListener('input', () => {
     p.body = src.value;
+    applyFront();
     markDirty();
     clearTimeout(t); t = setTimeout(refresh, 150);
     slashCheck();
@@ -746,6 +759,7 @@ function renderEditor() {
     closePalette();
     src.focus();
     if (part.action === 'file') { $('file').click(); return; }
+    if (part.action === 'front') { insertFront(src); src.dispatchEvent(new Event('input')); return; }
     insertBlock(src, part.text);
     if (part.sel) {
       const at = src.value.lastIndexOf(part.text, src.selectionStart);
@@ -825,6 +839,19 @@ function updateState() {
 }
 
 
+
+/* 原稿の先頭に設定を足す（もうあれば、そこへ移るだけ） */
+function insertFront(src) {
+  const fm = frontMatter(src.value);
+  if (fm.raw) { src.setSelectionRange(4, fm.raw.length - 4); src.focus(); return; }
+  const p = S.data.posts.find(x => x.id === S.editId);
+  const m = mediaById(p && p.media);
+  const lines = ['---', ...(multiMedia() ? [`メディア: ${m.name}`] : []), `デザイン: ${p?.theme ? THEME_NAMES[p.theme][0] : 'メディアと同じ'}`, `色: ${p?.color ? COLOR_NAMES[p.color] : 'メディアと同じ'}`, ...(p && p.category ? [`カテゴリ: ${p.category}`] : []), '---', ''];
+  src.value = lines.join('\n') + src.value;
+  src.setSelectionRange(4, 4 + lines[1].length);
+  src.focus();
+  toast('原稿の先頭に設定を入れました。デザインは 標準・ポップ・マガジン・ナチュラル・シンプル・テック、色は 青・赤・緑・橙・紫・青緑・黒 から選べます', 7000);
+}
 
 function insertBlock(src, text) {
   const s = src.selectionStart, v = src.value;

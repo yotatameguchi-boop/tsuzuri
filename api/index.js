@@ -1,4 +1,5 @@
 /* Tsuzuri のサーバー。Vercel ではすべてのURLがここに来て（静的ファイルを除く）、中で振り分ける。 */
+import { frontMatter, resolveMeta } from '../public/assets/render.js';
 import { getDoc, mutate, allowedType, presignMedia, putLocalMedia, readLocalMedia, useBlob, MEDIA_MAX } from '../lib/store.js';
 import {
   currentUser, issueCookie, clearCookie, hashPassword, verifyPassword, checkNewAccount, checkPassword,
@@ -216,7 +217,9 @@ export default async function handler(req, res) {
             doc.posts = doc.posts.filter(p => p !== cur);
             return;
           }
-          const p = b.post || {};
+          const p = { ...(b.post || {}) };
+          /* 原稿の先頭の設定（--- で挟んだ部分）があれば、そちらを優先する */
+          if (typeof p.body === 'string') Object.assign(p, resolveMeta(frontMatter(p.body).meta, { media: doc.media, posts: doc.posts, selfId: id }));
           if (!SLUG.test(String(p.slug || ''))) return fail(400, 'invalid', '記事のURLは半角英数とハイフンにしてください');
           if (doc.posts.some(o => o.id !== id && o.slug === p.slug)) return fail(400, 'invalid', 'そのURLはほかの記事で使われています');
           if (doc.media.some(m => m.slug === p.slug) || RESERVED.has(p.slug)) return fail(400, 'invalid', 'そのURLはメディアやサイトの仕組みで使われています');
@@ -238,6 +241,7 @@ export default async function handler(req, res) {
           const next = {
             id, slug: p.slug, title: p.title, body: p.body, date: p.date || new Date().toISOString().slice(0, 10), draft: !!p.draft,
             category, parent, order, visibility, media,
+            theme: THEMES[p.theme] ? p.theme : null, color: COLORS[p.color] ? p.color : null,
             author: cur ? cur.author : me.id, authorName: cur ? cur.authorName : me.name,
             rev: (cur ? cur.rev : 0) + 1, updated: new Date().toISOString().slice(0, 10),
           };

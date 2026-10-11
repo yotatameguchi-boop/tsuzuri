@@ -76,6 +76,22 @@ Footnotes use `text[^1]` with `[^1]: note`, math uses `$a^2$` or `$$ … $$`, fe
 
 Block names also accept Japanese aliases (`:::クイズ`, `:::計算`, `:::グラフ`, `:::ポイント` …).
 
+## Switching with front matter
+
+Write settings between `---` lines at the very top of a post to switch its publication, design and more without leaving Markdown (choose "記事の設定" from the `/` palette to insert it). Keys accept English or Japanese names.
+
+```
+---
+media: ashikamo
+theme: pop
+color: green
+category: Cafes
+---
+Body…
+```
+
+Supported keys: `media` (name or URL of a publication), `theme` (standard, pop, magazine, natural, simple, tech), `color` (blue, red, green, orange, purple, teal, ink), `category`, `parent` (title or URL), `order`, `visibility` (public or members), `date`, `slug`. Theme and color apply to that post's page only. Front matter takes precedence over the settings panel.
+
 ## Project layout
 
 | Path | What it does |
