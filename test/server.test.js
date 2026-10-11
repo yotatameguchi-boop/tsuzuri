@@ -307,6 +307,17 @@ test('複数のメディア：名前・色・URLのちがうメディアを1つ�
   assert.match((await call('GET', '/search?q=' + encodeURIComponent('カフェ'))).text, /あしかもメディア/, '全体の検索はメディア名つき');
   assert.match((await call('GET', '/sitemap.xml')).text, /\/ashikamo\/ashikaga-cafe/);
 
+  /* メディアごとのデザイン（ひな形）と追加のCSS */
+  assert.equal((await call('PUT', '/api/media/m2', { cookie: S.admin, body: { name: 'あしかもメディア', slug: 'ashikamo', mark: 'あし', color: 'green', theme: 'natural', css: '.prose h2{letter-spacing:.2em}</style><script>alert(1)</script>' } })).status, 200);
+  const themed = (await call('GET', '/ashikamo/')).text;
+  assert.match(themed, /family=Kiwi\+Maru/, 'ひな形の書体を読み込む');
+  assert.match(themed, /--bg:#f7f4ec/, 'ひな形の背景');
+  assert.match(themed, /\.prose h2\{letter-spacing:\.2em\}/, '追加のCSSが入る');
+  assert.doesNotMatch(themed, /<\/style><script>/, '追加のCSSから <style> の外へ抜け出せない');
+  assert.doesNotMatch((await call('GET', '/nisshi/')).text, /Kiwi\+Maru|letter-spacing:\.2em/, 'ほかのメディアには効かない');
+  assert.equal((await call('PUT', '/api/media/m2', { cookie: S.admin, body: { name: 'あしかもメディア', slug: 'ashikamo', theme: 'nope' } })).status, 200);
+  assert.doesNotMatch((await call('GET', '/ashikamo/')).text, /Kiwi\+Maru/, '知らないひな形は標準になる');
+
   await call('PUT', '/api/media/m3', { cookie: S.admin, body: { name: 'じもころ', slug: 'jimocoro', color: 'orange', visibility: 'members' } });
   assert.equal((await call('GET', '/jimocoro/')).status, 401, 'メンバーだけのメディア');
   assert.doesNotMatch((await call('GET', '/')).text, /じもころ/);

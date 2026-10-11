@@ -103,6 +103,14 @@ function renderNav() {
 
 /* ---- メディアとURL（読者のページと同じ決まり） ---- */
 const COLOR_NAMES = { blue: '青', red: '赤', green: '緑', orange: '橙', purple: '紫', teal: '青緑', ink: '黒' };
+const THEME_NAMES = {
+  standard: ['標準', '明朝の見出しと黒い線。落ち着いた読みもの向け'],
+  pop: ['ポップ', '丸ゴシック・丸い角・色つきの見出し。親しみやすいメディア向け'],
+  magazine: ['マガジン', '大きな明朝のタイトル・二重線・最初の文字を大きく'],
+  natural: ['ナチュラル', 'やわらかい手書き風の書体・生成りの背景・点線'],
+  simple: ['シンプル', '線を減らしたゴシック。マニュアルやお知らせ向け'],
+  tech: ['テック', '等幅の書体と「#」つきの見出し。技術ブログ向け'],
+};
 const COLOR_HEX = { blue: '#1f56e0', red: '#c8332f', green: '#12804e', orange: '#b9520c', purple: '#6847b8', teal: '#0d7680', ink: '#0b0d12' };
 const multiMedia = () => S.data.media.length > 1;
 const mediaById = id => S.data.media.find(m => m.id === id) || S.data.media[0];
@@ -156,6 +164,11 @@ function mediaForm(m, isNew) {
       <label class="field" style="flex:0 0 140px;min-width:0">色<select name="color">${Object.entries(COLOR_NAMES).map(([k, v]) => `<option value="${k}"${(m.color || 'blue') === k ? ' selected' : ''}>${v}</option>`).join('')}</select></label>
       <label class="field">読める人<select name="visibility"><option value="public"${m.visibility !== 'members' ? ' selected' : ''}>誰でも</option><option value="members"${m.visibility === 'members' ? ' selected' : ''}>ログインしたメンバーだけ</option></select></label>
     </div>
+    <fieldset class="theme-pick"><legend>デザイン</legend>${Object.entries(THEME_NAMES).map(([k, [n, d]]) =>
+      `<label class="theme-opt"><input type="radio" name="theme" value="${k}"${(m.theme || 'standard') === k ? ' checked' : ''}><span class="tp-sample tp-${k}">あア</span><span><strong>${n}</strong><span class="sub">${d}</span></span></label>`).join('')}</fieldset>
+    <details class="css-more"${m.css ? ' open' : ''}><summary>追加のCSS（上級者向け）</summary>
+      <p class="sub">このメディアのページにだけ効く CSS を書けます。例：<code>.prose h2{color:var(--blue)}</code>　色は <code>var(--blue)</code>、背景は <code>var(--bg)</code> で指定すると、暗い画面でも読みやすくなります。</p>
+      <textarea name="css" rows="6" spellcheck="false" placeholder="/* 例 */&#10;.home-head h1 { letter-spacing: .1em; }">${esc(m.css || '')}</textarea></details>
     <div class="err" role="alert"></div>
     <div class="row" style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" type="submit">${isNew ? 'メディアを作る' : '保存'}</button>
       ${isNew ? '' : `<a class="btn ghost" href="${multiMedia() ? '/' + esc(m.slug) + '/' : '/'}" target="_blank" rel="noopener">見る ↗</a>${S.data.media.length > 1 ? `<button class="btn ghost" type="button" data-del="${esc(m.id)}">このメディアを削除</button>` : ''}`}</div>
@@ -165,7 +178,7 @@ function mediaForm(m, isNew) {
 function renderMedia() {
   document.title = 'メディアの設定 | ' + (S.data.site.name || 'Tsuzuri');
   const site = S.data.site;
-  const blank = { name: '', slug: '', mark: '', tagline: '', color: Object.keys(COLOR_NAMES)[S.data.media.length % 7], visibility: 'public' };
+  const blank = { name: '', slug: '', mark: '', tagline: '', color: Object.keys(COLOR_NAMES)[S.data.media.length % 7], theme: 'standard', css: '', visibility: 'public' };
   root.innerHTML = `<section class="manage"><h1>メディアの設定</h1>
     <p class="sub">1つの Tsuzuri から、名前のちがう複数のメディアを出せます。メディアが2つ以上になると、それぞれ <code>/URL/</code> の下に置かれ、サイトのいちばん上は全メディアの入口になります（前のURLは自動で新しい場所へ案内します）。</p>
     ${S.data.media.map(m => mediaForm(m, false)).join('')}

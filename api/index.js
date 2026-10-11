@@ -4,7 +4,7 @@ import {
   currentUser, issueCookie, clearCookie, hashPassword, verifyPassword, checkNewAccount, checkPassword,
   setupKeyConfigured, checkSetupKey, makeInvite, findInvite, newId, publicUser,
 } from '../lib/auth.js';
-import { portalPage, homePage, postPage, categoryPage, searchPage, gatePage, notFoundPage, sitemap, feed, visiblePosts, siteIsPrivate, mediaIsPrivate, hasMembersPosts, multi, mediaOf, postHref, COLORS } from '../lib/pages.js';
+import { portalPage, homePage, postPage, categoryPage, searchPage, gatePage, notFoundPage, sitemap, feed, visiblePosts, siteIsPrivate, mediaIsPrivate, hasMembersPosts, multi, mediaOf, postHref, COLORS, THEMES } from '../lib/pages.js';
 
 const PAGE_TAG = 'tsuzuri-pages';
 const SLUG = /^[A-Za-z0-9._~-]{1,80}$/;
@@ -269,7 +269,9 @@ export default async function handler(req, res) {
           if (!MEDIA_SLUG.test(slug) || RESERVED.has(slug)) return fail(400, 'invalid', 'URLは半角の英小文字・数字・ハイフンで2〜30文字にしてください（write・api など一部の名前は使えません）');
           if (doc.media.some(m => m.id !== id && m.slug === slug)) return fail(400, 'invalid', 'そのURLはほかのメディアで使われています');
           if (doc.posts.some(p => p.slug === slug)) return fail(400, 'invalid', 'そのURLは記事で使われています');
-          const next = { id, slug, name, tagline, mark, color: COLORS[b.color] ? b.color : 'blue', visibility: b.visibility === 'members' ? 'members' : 'public' };
+          const css = String(b.css || '');
+          if (css.length > 20000) return fail(400, 'invalid', '追加のCSSは2万文字までです');
+          const next = { id, slug, name, tagline, mark, color: COLORS[b.color] ? b.color : 'blue', theme: THEMES[b.theme] ? b.theme : 'standard', css, visibility: b.visibility === 'members' ? 'members' : 'public' };
           if (cur) Object.assign(cur, next); else doc.media.push(next);
         });
         if (res.headersSent) return;

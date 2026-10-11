@@ -21,6 +21,7 @@ Demo: https://tsuzuri-omega.vercel.app (sample content is in Japanese)
 - **Restricted reading**: make individual posts or the whole site visible to logged-in members only. Read-only accounts are available.
 - **Document syntax**: footnotes, math (KaTeX), syntax highlighting and attachments (PDF, Word, Excel, PowerPoint, CSV, ZIP).
 - **Portable**: export each post as Markdown or a self-contained HTML file (interactive blocks keep working), or the whole site as JSON.
+- **Multiple publications**: run several differently named media (e.g. a local-news site and a lifestyle magazine) from one Tsuzuri. Each has its own name, logo, color, design preset (standard, pop, magazine, natural, simple, tech), optional custom CSS and visibility, plus its own home, categories, search and RSS
 - **Small**: no framework, two dependencies (`@vercel/blob`, `@vercel/functions`).
 
 ## How it differs from WordPress

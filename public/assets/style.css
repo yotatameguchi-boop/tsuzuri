@@ -433,3 +433,18 @@ details.menu summary::-webkit-details-marker{display:none}
 .mf-head .k.two{font-size:12px}
 .mf-head .sub{margin:0;font-family:var(--mono);font-size:12.5px}
 .media-form .set-grid{padding:0}
+.theme-pick{border:0;padding:0;margin:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px}
+.theme-pick legend{font-size:12.5px;color:var(--muted);margin-bottom:6px;padding:0}
+.theme-opt{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--line);border-radius:8px;padding:10px;cursor:pointer;font-size:13px;line-height:1.5}
+.theme-opt:has(input:checked){border-color:var(--blue);background:var(--blue-soft)}
+.theme-opt input{margin-top:3px;accent-color:var(--blue)}
+.theme-opt .sub{display:block;margin:2px 0 0;font-size:12px}
+.tp-sample{flex:none;width:44px;height:36px;display:grid;place-items:center;border:1px solid var(--line);background:var(--bg);font-size:16px;font-weight:800}
+.tp-standard{font-family:var(--serif);border-radius:4px}
+.tp-pop{font-family:"Zen Maru Gothic",var(--sans);border-radius:999px;background:var(--blue-soft)}
+.tp-magazine{font-family:"Noto Serif JP",serif;border:3px double var(--ink);border-radius:0}
+.tp-natural{font-family:"Kiwi Maru",serif;border-style:dotted;border-radius:12px;background:#f7f4ec;color:#2b2a24}
+.tp-simple{font-family:var(--sans);font-weight:700;border-radius:8px}
+.tp-tech{font-family:var(--mono);border-radius:3px}
+.css-more summary{cursor:pointer;font-size:13px;color:var(--ink-2)}
+.css-more textarea{width:100%;font-family:var(--mono);font-size:12.5px;border:1px solid var(--line);border-radius:6px;padding:8px 10px;background:var(--bg);color:var(--ink);margin-top:6px}
