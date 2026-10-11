@@ -176,3 +176,92 @@ test('パスワードを忘れた人には、管理者が再設定リンクを�
   assert.equal(edit.status, 200, '自分の記事をまた直せる');
   assert.equal((await call('POST', '/api/accept', { body: { token: r.json.token, password: 'again-again-1' } })).status, 400, '1回だけ使える');
 });
+
+test('整理：カテゴリ・親の記事・並び順。棚・パンくず・この中の記事・前後の記事が出る', async () => {
+  const put = (id, post, baseRev) => call('PUT', `/api/posts/${id}`, { cookie: S.admin, body: { baseRev, post: { draft: false, body: '本文', ...post } } });
+  assert.equal((await put('m0', { slug: 'manual', title: '使い方マニュアル', category: 'マニュアル', order: 1 })).status, 200);
+  assert.equal((await put('m1', { slug: 'manual-login', title: 'ログインのしかた', category: 'マニュアル', parent: 'm0', order: 1 })).status, 200);
+  assert.equal((await put('m2', { slug: 'manual-write', title: '記事の書き方', category: 'マニュアル', parent: 'm0', order: 2 })).status, 200);
+  const cyc = await put('m0', { slug: 'manual', title: '使い方マニュアル', category: 'マニュアル', parent: 'm2' }, 1);
+  assert.equal(cyc.status, 400, '自分の下の記事を親にはできない');
+
+  const home = await call('GET', '/');
+  assert.match(home.text, /<section class="shelf"><h2><a href="\/c\/%E3%83%9E%E3%83%8B%E3%83%A5%E3%82%A2%E3%83%AB">マニュアル<\/a>/);
+  const cat = await call('GET', '/c/' + encodeURIComponent('マニュアル'));
+  assert.equal(cat.status, 200);
+  assert.ok(cat.text.indexOf('ログインのしかた') < cat.text.indexOf('記事の書き方'), '並び順のとおり');
+  const parent = await call('GET', '/manual');
+  assert.match(parent.text, /この中の記事[\s\S]*ログインのしかた[\s\S]*記事の書き方/);
+  const child = await call('GET', '/manual-login');
+  assert.match(child.text, /class="crumbs"><a href="\/">ホーム<\/a>.*マニュアル.*使い方マニュアル/);
+  assert.match(child.text, /class="next" href="\/manual-write"/);
+  assert.equal((await call('GET', '/c/' + encodeURIComponent('ない棚'))).status, 404);
+});
+
+test('検索：全角半角・大文字小文字・カタカナひらがなのちがいを気にしない', async () => {
+  const r = await call('GET', '/search?q=' + encodeURIComponent('議事録 型'));
+  assert.equal(r.status, 200);
+  assert.match(r.text, /インターン3か月目で身についた/);
+  assert.match(r.text, /<mark>議事録<\/mark>/);
+  assert.match((await call('GET', '/search?q=' + encodeURIComponent('ＴＳＵＺＵＲＩ'))).text, /Tsuzuri の書き方/);
+  await call('PUT', '/api/posts/k1', { cookie: S.admin, body: { post: { slug: 'kana', title: 'ひらがなの記事', body: 'ツヅリで書いた', draft: false } } });
+  assert.match((await call('GET', '/search?q=' + encodeURIComponent('つづり'))).text, /ひらがなの記事/);
+  assert.match((await call('GET', '/search?q=' + encodeURIComponent('存在しない言葉xyz'))).text, /見つかりませんでした/);
+});
+
+test('読む人を限定：メンバー限定の記事と、サイト全体をメンバーだけにする設定', async () => {
+  const inv = await call('POST', '/api/invites', { cookie: S.admin, body: { role: 'reader' } });
+  const acc = await call('POST', '/api/accept', { body: { token: inv.json.token, name: '読む人', loginId: 'reader1', password: 'reader-pass-1' } });
+  assert.equal(acc.json.user.role, 'reader');
+  const reader = acc.cookie;
+  assert.equal((await call('GET', '/api/content', { cookie: reader })).status, 403, '閲覧専用は書く画面のデータを読めない');
+  assert.equal((await call('PUT', '/api/posts/r1', { cookie: reader, body: { post: { slug: 'r1', title: 'x', body: '' } } })).status, 403);
+
+  await call('PUT', '/api/posts/s1', { cookie: S.admin, body: { post: { slug: 'internal-rule', title: '社内だけの規程', body: '社外秘', draft: false, visibility: 'members' } } });
+  assert.equal((await call('GET', '/internal-rule')).status, 404, 'ログインしていない人には無い');
+  const asReader = await call('GET', '/internal-rule', { cookie: reader });
+  assert.equal(asReader.status, 200);
+  assert.match(asReader.text, /メンバー限定/);
+  assert.match(asReader.headers['Cache-Control'], /private, no-store/, '人によって中身が変わるので CDN に置かない');
+  assert.doesNotMatch((await call('GET', '/')).text, /社内だけの規程/);
+  assert.match((await call('GET', '/', { cookie: reader })).text, /社内だけの規程/);
+  assert.doesNotMatch((await call('GET', '/sitemap.xml')).text, /internal-rule/);
+  assert.doesNotMatch((await call('GET', '/feed.xml')).text, /社内だけの規程/);
+  assert.doesNotMatch((await call('GET', '/search?q=' + encodeURIComponent('規程'))).text, /社内だけの規程/);
+
+  const site = (await call('GET', '/api/content', { cookie: S.admin })).json.site;
+  assert.equal((await call('PUT', '/api/site', { cookie: S.admin, body: { ...site, visibility: 'members' } })).status, 200);
+  const gate = await call('GET', '/minutes-in-10-minutes');
+  assert.equal(gate.status, 401);
+  assert.match(gate.text, /このサイトはメンバーだけが読めます/);
+  assert.equal((await call('GET', '/minutes-in-10-minutes', { cookie: reader })).status, 200);
+  assert.match((await call('GET', '/robots.txt')).text, /Disallow: \/\n/);
+  assert.equal((await call('PUT', '/api/site', { cookie: S.admin, body: { ...site, visibility: 'public' } })).status, 200);
+  assert.equal((await call('GET', '/minutes-in-10-minutes')).status, 200);
+});
+
+test('記法：脚注・数式・コードの言語・添付ファイル', async () => {
+  const body = '注のある文[^1]。式 $a^2+b^2=c^2$ と値段 $100。\n\n$$\n\\sum_{i=1}^n i\n$$\n\n```python\nprint("hi")\n```\n\n[規程.pdf](https://example.com/rule.pdf)\n\n[^1]: これが注です。';
+  await call('PUT', '/api/posts/n1', { cookie: S.admin, body: { post: { slug: 'notation', title: '記法の確認', body, draft: false } } });
+  const t = (await call('GET', '/notation')).text;
+  assert.match(t, /<sup class="fn"><a href="#fn-1" id="fnref-1">1<\/a><\/sup>/);
+  assert.match(t, /<li id="fn-1">これが注です。/);
+  assert.match(t, /<span class="math" data-tex="a\^2\+b\^2=c\^2">/);
+  assert.match(t, /値段 \$100/, '金額は数式にしない');
+  assert.match(t, /class="math math-block" data-tex="\\sum_\{i=1\}\^n i"/);
+  assert.match(t, /<code class="language-python">/);
+  assert.match(t, /class="card file" href="https:\/\/example.com\/rule.pdf"[\s\S]*PDF・添付ファイル/);
+});
+
+test('書き出し：管理者は全記事をJSONで持ち出せる。添付ファイルも上げられる', async () => {
+  const ex = await call('GET', '/api/export', { cookie: S.admin });
+  assert.equal(ex.status, 200);
+  assert.match(ex.headers['Content-Disposition'], /attachment; filename="tsuzuri-\d{4}-\d{2}-\d{2}\.json"/);
+  assert.equal(ex.json.format, 'tsuzuri');
+  assert.ok(ex.json.posts.length > 5);
+  assert.equal(ex.json.users, undefined, 'アカウント情報は含めない');
+  const w = (await call('POST', '/api/login', { body: { loginId: 'sato', password: 'sato-reset-789' } })).cookie;
+  assert.equal((await call('GET', '/api/export', { cookie: w })).status, 403);
+  assert.equal((await call('POST', '/api/upload-url', { cookie: S.admin, body: { type: 'application/pdf', size: 1000 } })).status, 200);
+  assert.equal((await call('POST', '/api/upload-url', { cookie: S.admin, body: { type: 'text/html', size: 10 } })).status, 415);
+});

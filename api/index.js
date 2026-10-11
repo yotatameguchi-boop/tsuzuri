@@ -4,7 +4,7 @@ import {
   currentUser, issueCookie, clearCookie, hashPassword, verifyPassword, checkNewAccount, checkPassword,
   setupKeyConfigured, checkSetupKey, makeInvite, findInvite, newId, publicUser,
 } from '../lib/auth.js';
-import { homePage, postPage, notFoundPage, sitemap, feed, published } from '../lib/pages.js';
+import { homePage, postPage, categoryPage, searchPage, gatePage, notFoundPage, sitemap, feed, visiblePosts, siteIsPrivate, hasMembersPosts } from '../lib/pages.js';
 
 const PAGE_TAG = 'tsuzuri-pages';
 const SLUG = /^[A-Za-z0-9._~-]{1,80}$/;
@@ -23,8 +23,10 @@ function send(res, status, body, type, extra = {}) {
 const json = (res, status, obj, extra) => send(res, status, JSON.stringify(obj), 'application/json; charset=utf-8', { 'Cache-Control': 'no-store', ...extra });
 const fail = (status, error, message) => ({ abort: true, status, body: { error, message } });
 
-/* 読者向けのページは CDN に長く置き、記事が変わったら消す（だから公開した瞬間に反映される） */
-async function page(res, status, body, type = 'text/html; charset=utf-8') {
+/* 読者向けのページは CDN に長く置き、記事が変わったら消す（だから公開した瞬間に反映される）。
+   メンバー限定の記事があるサイトは、見る人によって中身が変わるので CDN に置かない */
+async function page(res, status, body, type = 'text/html; charset=utf-8', cacheable = true) {
+  if (!cacheable) return send(res, status, body, type, { 'Cache-Control': 'private, no-store' });
   if (process.env.VERCEL) {
     try { const { addCacheTag } = await import('@vercel/functions'); await addCacheTag(PAGE_TAG); } catch {}
   }
@@ -61,7 +63,9 @@ function sameSite(req) {
   try { return new URL(o).host === (req.headers['x-forwarded-host'] || req.headers.host); } catch { return false; }
 }
 const slowFail = () => new Promise(r => setTimeout(r, 800));
-const canEdit = (user, post) => user.role === 'admin' || (post.author && post.author === user.id);
+const ROLES = ['admin', 'writer', 'reader'];
+const canWrite = user => user.role === 'admin' || user.role === 'writer';
+const canEdit = (user, post) => user.role === 'admin' || (user.role === 'writer' && post.author && post.author === user.id);
 const activeAdmins = doc => doc.users.filter(u => u.role === 'admin' && !u.disabled);
 
 export default async function handler(req, res) {
@@ -176,6 +180,17 @@ export default async function handler(req, res) {
       }
 
       /* ---- 記事 ---- */
+      const writeApi = pathname === '/api/content' || pathname.startsWith('/api/posts/') || pathname.startsWith('/api/upload') || pathname === '/api/site' || pathname === '/api/export';
+      if (writeApi && !canWrite(me)) return json(res, 403, { error: 'reader', message: '閲覧専用のアカウントでは書けません' });
+
+      if (pathname === '/api/export' && method === 'GET') {
+        if (me.role !== 'admin') return json(res, 403, { error: 'forbidden', message: '書き出しは管理者だけができます' });
+        const { data } = await getDoc('content');
+        const stamp = new Date().toISOString().slice(0, 10);
+        return send(res, 200, JSON.stringify({ format: 'tsuzuri', version: 1, exportedAt: new Date().toISOString(), ...data }, null, 1), 'application/json; charset=utf-8',
+          { 'Cache-Control': 'no-store', 'Content-Disposition': `attachment; filename="tsuzuri-${stamp}.json"` });
+      }
+
       if (pathname === '/api/content' && method === 'GET') {
         const { data } = await getDoc('content');
         return json(res, 200, data);
@@ -201,8 +216,21 @@ export default async function handler(req, res) {
           if (doc.posts.some(o => o.id !== id && o.slug === p.slug)) return fail(400, 'invalid', 'そのURLはほかの記事で使われています');
           if (typeof p.title !== 'string' || p.title.length > 200 || typeof p.body !== 'string') return fail(400, 'invalid', 'タイトルか本文の形が正しくありません');
           if (p.date && !DATE.test(p.date)) return fail(400, 'invalid', '日付の形が正しくありません');
+          const category = String(p.category || '').trim();
+          if (category.length > 40) return fail(400, 'invalid', 'カテゴリは40文字までです');
+          const parent = p.parent || null;
+          if (parent) {
+            if (parent === id) return fail(400, 'invalid', '自分自身を親の記事にはできません');
+            const byId = new Map(doc.posts.map(x => [x.id, x]));
+            if (!byId.has(parent)) return fail(400, 'invalid', '親の記事が見つかりません');
+            for (let c = byId.get(parent), n = 0; c && n < 50; c = byId.get(c.parent), n++) if (c.id === id) return fail(400, 'invalid', 'この記事の下にある記事は、親にできません');
+          }
+          const order = p.order === '' || p.order == null ? null : Number(p.order);
+          if (order !== null && !Number.isFinite(order)) return fail(400, 'invalid', '並び順は数字で入れてください');
+          const visibility = p.visibility === 'members' ? 'members' : 'public';
           const next = {
             id, slug: p.slug, title: p.title, body: p.body, date: p.date || new Date().toISOString().slice(0, 10), draft: !!p.draft,
+            category, parent, order, visibility,
             author: cur ? cur.author : me.id, authorName: cur ? cur.authorName : me.name,
             rev: (cur ? cur.rev : 0) + 1, updated: new Date().toISOString().slice(0, 10),
           };
@@ -218,7 +246,8 @@ export default async function handler(req, res) {
         const b = await readJson(req);
         const name = String(b.name || '').trim(), tagline = String(b.tagline || '').trim();
         if (!name || name.length > 60 || tagline.length > 200) return json(res, 400, { error: 'invalid', message: 'サイト名は1〜60文字、説明は200文字までです' });
-        await run('content', doc => { doc.site = { ...doc.site, name, tagline }; });
+        const visibility = b.visibility === 'members' ? 'members' : 'public';
+        await run('content', doc => { doc.site = { ...doc.site, name, tagline, visibility }; });
         if (res.headersSent) return;
         return json(res, 200, { ok: true });
       }
@@ -226,7 +255,7 @@ export default async function handler(req, res) {
       /* ---- 画像・動画 ---- */
       if (pathname === '/api/upload-url' && method === 'POST') {
         const b = await readJson(req);
-        if (!allowedType(b.type)) return json(res, 415, { error: 'type', message: '画像（jpg・png・webp・gif）か動画（mp4・webm・mov）を選んでください' });
+        if (!allowedType(b.type)) return json(res, 415, { error: 'type', message: '画像・動画・PDF・Word・Excel・PowerPoint・CSV・テキスト・ZIP のどれかを選んでください' });
         if (!(b.size > 0) || b.size > MEDIA_MAX) return json(res, 413, { error: 'too_large', message: 'ファイルは100MBまでです' });
         if (!useBlob()) return json(res, 200, { direct: '/api/upload' });
         return json(res, 200, await presignMedia(b.type, b.size));
@@ -250,7 +279,7 @@ export default async function handler(req, res) {
           await run('users', doc => {
             const u = doc.users.find(x => x.id === um[1]);
             if (!u) return fail(404, 'not_found', 'そのメンバーは見つかりません');
-            if (b.role !== undefined && !['admin', 'writer'].includes(b.role)) return fail(400, 'invalid', '役割が正しくありません');
+            if (b.role !== undefined && !ROLES.includes(b.role)) return fail(400, 'invalid', '役割が正しくありません');
             const wasAdmin = u.role === 'admin' && !u.disabled;
             if (b.role !== undefined) u.role = b.role;
             if (b.disabled !== undefined) { u.disabled = !!b.disabled; u.ses = (u.ses || 0) + 1; }
@@ -270,7 +299,7 @@ export default async function handler(req, res) {
         }
         if (pathname === '/api/invites' && method === 'POST') {
           const b = await readJson(req);
-          const role = b.role === 'admin' ? 'admin' : 'writer';
+          const role = ROLES.includes(b.role) ? b.role : 'writer';
           const { token, invite } = makeInvite(role, me.id);
           await run('users', doc => { doc.invites = doc.invites.filter(i => i.exp > Date.now()); doc.invites.push(invite); });
           if (res.headersSent) return;
@@ -291,23 +320,39 @@ export default async function handler(req, res) {
       const buf = await readLocalMedia(pathname.slice(7));
       if (!buf) return send(res, 404, 'not found', 'text/plain');
       const ext = pathname.split('.').pop();
-      const t = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime' }[ext] || 'application/octet-stream';
-      return send(res, 200, buf, t, { 'Cache-Control': 'public, max-age=31536000, immutable' });
+      const t = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', pdf: 'application/pdf' }[ext] || 'application/octet-stream';
+      return send(res, 200, buf, t, { 'Cache-Control': 'public, max-age=31536000, immutable', ...(t === 'application/octet-stream' ? { 'Content-Disposition': 'attachment' } : {}) });
     }
 
     /* ---- 読者のページ ---- */
     if (method !== 'GET' && method !== 'HEAD') return send(res, 405, 'method not allowed', 'text/plain');
     const { data } = await getDoc('content');
     const o = origin(req);
-    if (pathname === '/' || pathname === '') return page(res, 200, homePage(data, o));
+    const viewer = /(?:^|;\s*)tz_s=/.test(req.headers.cookie || '') ? currentUser(req, (await getDoc('users')).data) : null;
+    const personal = siteIsPrivate(data) || hasMembersPosts(data);
+    const html = (status, body) => page(res, status, body, 'text/html; charset=utf-8', !personal && status === 200);
+
+    if (pathname === '/robots.txt') {
+      return send(res, 200, siteIsPrivate(data) ? 'User-agent: *\nDisallow: /\n' : `User-agent: *\nDisallow: /write\nDisallow: /api/\nDisallow: /search\nSitemap: ${o}/sitemap.xml\n`, 'text/plain; charset=utf-8');
+    }
     if (pathname === '/sitemap.xml') return page(res, 200, sitemap(data, o), 'application/xml; charset=utf-8');
     if (pathname === '/feed.xml') return page(res, 200, feed(data, o), 'application/rss+xml; charset=utf-8');
-    if (pathname === '/robots.txt') return send(res, 200, `User-agent: *\nDisallow: /write\nDisallow: /api/\nSitemap: ${o}/sitemap.xml\n`, 'text/plain; charset=utf-8');
+    if (siteIsPrivate(data) && !viewer) return page(res, 401, gatePage(data, o, pathname), 'text/html; charset=utf-8', false);
 
-    const slug = decodeURIComponent(pathname.replace(/^\/+|\/+$/g, ''));
-    const p = SLUG.test(slug) && published(data).find(x => x.slug === slug);
-    if (p) return page(res, 200, postPage(data, p, o));
-    return page(res, 404, notFoundPage(data, o));
+    if (pathname === '/' || pathname === '') return html(200, homePage(data, o, viewer));
+    if (pathname === '/search') return html(200, searchPage(data, o, viewer, String(url.searchParams.get('q') || '').slice(0, 100)));
+    const cm = pathname.match(/^\/c\/([^/]+)\/?$/);
+    if (cm) {
+      let cat = '';
+      try { cat = decodeURIComponent(cm[1]); } catch {}
+      const body = cat && categoryPage(data, o, viewer, cat);
+      return body ? html(200, body) : html(404, notFoundPage(data, o));
+    }
+    let slug = '';
+    try { slug = decodeURIComponent(pathname.replace(/^\/+|\/+$/g, '')); } catch {}
+    const p = SLUG.test(slug) && visiblePosts(data, viewer).find(x => x.slug === slug);
+    if (p) return html(200, postPage(data, p, o, viewer));
+    return page(res, 404, notFoundPage(data, o), 'text/html; charset=utf-8', !personal);
   } catch (e) {
     console.error(e);
     if (res.headersSent) return;

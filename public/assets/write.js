@@ -10,7 +10,10 @@ const fmtDate = d => (d || '').replace(/-/g, '.');
 const readMin = body => Math.max(1, Math.round(String(body || '').replace(/\s/g, '').length / 500));
 const isAdmin = () => S.me && S.me.role === 'admin';
 const canEdit = p => isAdmin() || !p.rev || p.author === S.me.id;
-const ROLE = { admin: '管理者', writer: '書き手' };
+const ROLE = { admin: '管理者', writer: '書き手', reader: '閲覧者' };
+const POST_FIELDS = ['slug', 'title', 'body', 'date', 'draft', 'category', 'parent', 'order', 'visibility'];
+const pick = p => Object.fromEntries(POST_FIELDS.map(k => [k, p[k] ?? null]));
+const nextPath = () => { const n = new URLSearchParams(location.search).get('next'); return n && /^\/(?!\/)/.test(n) ? n : null; };
 
 function toast(msg, ms = 3200) {
   const t = $('toast');
@@ -74,7 +77,8 @@ function renderGate(kind, note = '') {
     if (kind === 'invite') r = await post('/api/accept', { ...f, loginId: f.loginId.toLowerCase(), token: inviteToken() });
     if (kind === 'reset') r = await post('/api/accept', { ...f, token: inviteToken() });
     if (!r.ok) return r.body.message || 'うまくいきませんでした。もう一度試してください';
-    if (kind === 'invite' || kind === 'reset') history.replaceState(null, '', '/write');
+    if (kind === 'invite' || kind === 'reset') history.replaceState(null, '', '/write' + location.search);
+    if (nextPath()) { location.href = nextPath(); return; }
     start();
   });
 }
@@ -103,15 +107,19 @@ function renderList() {
   const site = S.data.site;
   const posts = S.data.posts.filter(p => canEdit(p) || !p.draft).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   root.innerHTML = `<section class="home-head"><h1>${esc(site.name || '無題のサイト')}</h1>${site.tagline ? `<p>${esc(site.tagline)}</p>` : ''}` +
-    (isAdmin() ? `<button class="btn ghost" type="button" id="site-open" style="margin-top:10px;margin-left:-10px">サイト名と説明を変える</button>
+    (S.data.site.visibility === 'members' ? '<p class="sub">このサイトは、ログインしたメンバーだけが読めます。</p>' : '') +
+    (isAdmin() ? `<div class="row" style="margin-top:10px;margin-left:-10px;display:flex;gap:4px;flex-wrap:wrap"><button class="btn ghost" type="button" id="site-open">サイトの設定</button><a class="btn ghost" href="/api/export" download>全記事を書き出す（JSON）</a></div>
     <form class="site-edit" id="site-form" hidden><input name="name" aria-label="サイト名" placeholder="サイト名" value="${esc(site.name || '')}" required>
     <input name="tagline" aria-label="サイトの説明" placeholder="サイトの説明（1行）" value="${esc(site.tagline || '')}">
+    <label class="field">サイトを読める人<select name="visibility"><option value="public"${site.visibility !== 'members' ? ' selected' : ''}>誰でも（検索エンジンにも載る）</option><option value="members"${site.visibility === 'members' ? ' selected' : ''}>ログインしたメンバーだけ（社内向け）</option></select></label>
     <div class="err" role="alert"></div><div class="row"><button class="btn primary" type="submit">保存</button><button class="btn ghost" type="button" id="site-cancel">やめる</button></div></form>` : '') +
     `</section><section class="posts" aria-label="記事一覧">${posts.length ? posts.map(p => {
       const kinds = liveKinds(p.body);
       const mine = canEdit(p);
       const chips = [
         ...(p.draft ? ['<span class="chip draft">下書き（読者には見えません）</span>'] : []),
+        ...(p.visibility === 'members' ? ['<span class="chip draft">メンバー限定</span>'] : []),
+        ...(p.category ? [`<span class="chip draft">${esc(p.category)}</span>`] : []),
         ...(p.authorName ? [`<span class="chip draft">${esc(p.authorName)}</span>`] : []),
         ...kinds.map(k => `<span class="chip">${k}</span>`),
       ];
@@ -124,12 +132,12 @@ function renderList() {
   $('first-post')?.addEventListener('click', newPost);
   const form = $('site-form');
   if (form) {
-    $('site-open').addEventListener('click', () => { form.hidden = false; $('site-open').hidden = true; form.querySelector('input').focus(); });
+    $('site-open').addEventListener('click', () => { form.hidden = false; $('site-open').parentElement.hidden = true; form.querySelector('input').focus(); });
     $('site-cancel').addEventListener('click', renderList);
     bindForm(form, async f => {
       const r = await post('/api/site', f, 'PUT');
       if (!r.ok) return r.body.message || '保存できませんでした';
-      S.data.site = { ...S.data.site, name: f.name.trim(), tagline: f.tagline.trim() };
+      S.data.site = { ...S.data.site, name: f.name.trim(), tagline: f.tagline.trim(), visibility: f.visibility };
       toast('サイト名と説明を保存しました');
       renderList();
     });
@@ -144,15 +152,15 @@ async function renderMembers() {
   if (!r.ok) { root.innerHTML = `<p class="empty-note">${esc(r.body.message || '読み込めませんでした')}</p>`; return; }
   const { users, invites } = r.body;
   root.innerHTML = `<section class="manage">
-    <h1>メンバー</h1><p class="sub">管理者はすべての記事・サイト設定・メンバーを扱えます。書き手は自分の記事だけを書けます。</p>
+    <h1>メンバー</h1><p class="sub">管理者はすべての記事・サイト設定・メンバーを扱えます。書き手は自分の記事だけを書けます。閲覧者は「メンバーだけ」の記事を読めます（書けません）。</p>
     <div class="mlist">${users.map(u => `<div class="mrow">
       <span class="t">${esc(u.name)}<span class="id">${esc(u.loginId)}${u.id === S.me.id ? '（あなた）' : ''}</span></span>
       ${u.disabled ? '<span class="chip draft">利用停止中</span>' : ''}
-      <select data-role="${esc(u.id)}" aria-label="${esc(u.name)}の役割">${['writer', 'admin'].map(x => `<option value="${x}"${u.role === x ? ' selected' : ''}>${ROLE[x]}</option>`).join('')}</select>
+      <select data-role="${esc(u.id)}" aria-label="${esc(u.name)}の役割">${['reader', 'writer', 'admin'].map(x => `<option value="${x}"${u.role === x ? ' selected' : ''}>${ROLE[x]}</option>`).join('')}</select>
       ${u.id === S.me.id ? '' : `<button class="btn" type="button" data-reset="${esc(u.id)}" data-name="${esc(u.name)}">パスワード再設定リンク</button><button class="btn" type="button" data-disable="${esc(u.id)}" data-on="${u.disabled ? 0 : 1}">${u.disabled ? '利用を再開' : '利用を止める'}</button>`}
     </div>`).join('')}</div>
     <h2 class="sec">人を招待する</h2>
-    <form class="invite-form" id="invite-form"><select name="role" aria-label="招待する人の役割"><option value="writer">書き手として</option><option value="admin">管理者として</option></select>
+    <form class="invite-form" id="invite-form"><select name="role" aria-label="招待する人の役割"><option value="writer">書き手として</option><option value="reader">閲覧者として（読むだけ）</option><option value="admin">管理者として</option></select>
       <button class="btn primary" type="submit">招待リンクを作る</button><div class="err" role="alert"></div></form>
     <div id="invite-out"></div>
     ${invites.length ? `<h2 class="sec">まだ使われていない招待</h2><div class="mlist">${invites.map(i => `<div class="mrow"><span class="t">${ROLE[i.role]}として</span><time>${new Date(i.exp).toLocaleDateString('ja-JP')} まで</time><button class="btn" type="button" data-revoke="${esc(i.id)}">取り消す</button></div>`).join('')}</div>` : ''}
@@ -238,7 +246,7 @@ function applyHash() {
   S.view = 'list'; route();
 }
 window.addEventListener('hashchange', () => {
-  if (!S.me) return;
+  if (!S.me || /^#(fn|fnref)-\d+$/.test(location.hash)) return;
   if (S.view === 'edit' && S.dirty) { toast('保存していない変更があります。先に保存するか「← 戻る」を押してください'); return; }
   applyHash();
 });
@@ -251,7 +259,7 @@ function backup() {
   backupTimer = setTimeout(() => {
     const p = S.data.posts.find(x => x.id === S.editId);
     if (!p) return;
-    try { localStorage.setItem(draftKey(p.id), JSON.stringify({ at: Date.now(), baseRev: p.rev || 0, post: { slug: p.slug, title: p.title, body: p.body, date: p.date, draft: p.draft } })); } catch {}
+    try { localStorage.setItem(draftKey(p.id), JSON.stringify({ at: Date.now(), baseRev: p.rev || 0, post: pick(p) })); } catch {}
   }, 400);
 }
 const dropBackup = id => { try { localStorage.removeItem(draftKey(id)); } catch {} };
@@ -295,7 +303,7 @@ async function save() {
   S.saving = true;
   const btns = [...document.querySelectorAll('#ed-pub, #ed-draft, #ed-unpub')];
   btns.forEach(b => { b.disabled = true; });
-  const r = await post(`/api/posts/${p.id}`, { baseRev: p.rev || undefined, post: { slug: p.slug, title: p.title, body: p.body, date: p.date, draft: p.draft } }, 'PUT');
+  const r = await post(`/api/posts/${p.id}`, { baseRev: p.rev || undefined, post: pick(p) }, 'PUT');
   S.saving = false;
   btns.forEach(b => { b.disabled = false; });
   if (r.ok) {
@@ -329,6 +337,59 @@ function showConflict(p, latest) {
   $('cf-mine').addEventListener('click', async () => { p.rev = latest.rev; note.innerHTML = ''; if (await save()) { toast('あなたの変更で保存しました'); updateState(); } });
 }
 
+/* 親の記事の候補：自分と、自分の下にある記事は選べない */
+function parentOptions(p) {
+  const posts = S.data.posts.filter(x => x.rev);
+  const below = new Set([p.id]);
+  for (let grew = true; grew;) { grew = false; for (const x of posts) if (x.parent && below.has(x.parent) && !below.has(x.id)) { below.add(x.id); grew = true; } }
+  const kids = new Map();
+  for (const x of posts) { const k = posts.some(y => y.id === x.parent) ? x.parent : null; if (!kids.has(k)) kids.set(k, []); kids.get(k).push(x); }
+  const out = [];
+  const walk = (parent, depth) => (kids.get(parent) || []).sort((a, b) => (a.category || '').localeCompare(b.category || '') || (a.order ?? 1e9) - (b.order ?? 1e9) || a.title.localeCompare(b.title)).forEach(x => {
+    if (!below.has(x.id)) out.push(`<option value="${esc(x.id)}"${p.parent === x.id ? ' selected' : ''}>${'　'.repeat(depth)}${x.category && !depth ? `［${esc(x.category)}］` : ''}${esc(x.title || '無題')}</option>`);
+    if (depth < 6) walk(x.id, depth + 1);
+  });
+  walk(null, 0);
+  return out.join('');
+}
+
+/* ---- 書き出し：Markdown（前書きつき）と、単体で開ける HTML ---- */
+function download(name, text, type) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = Object.assign(document.createElement('a'), { href: url, download: name });
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+async function exportPost(p, kind) {
+  const meta = { title: p.title, date: p.date, updated: p.updated, author: p.authorName, category: p.category, slug: p.slug };
+  if (kind === 'md') {
+    const fm = Object.entries(meta).filter(([, v]) => v).map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join('\n');
+    download(`${p.slug}.md`, `---\n${fm}\n---\n\n# ${p.title}\n\n${p.body}\n`, 'text/markdown;charset=utf-8');
+    return toast('Markdown で書き出しました');
+  }
+  toast('書き出しの準備中…', 0);
+  try {
+    const [css, renderJs, liveJs] = await Promise.all(['/assets/style.css', '/assets/render.js', '/assets/live.js'].map(u => fetch(u).then(r => r.text())));
+    const script = renderJs.replace(/^export \{[^}]*\};?\s*$/m, '') + '\n' +
+      liveJs.replace(/^import .*$/m, '').replace(/^export \{[^}]*\};?\s*$/m, '').replace(/^export function/m, 'function');
+    const r = renderBody(p.body, S.data.posts, u => u, slug => `${location.origin}/${slug}`);
+    const html = `<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(p.title)}</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=M+PLUS+1+Code:wght@400;500&family=Shippori+Mincho+B1:wght@600;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<style>${css}</style></head><body>
+<div id="progress" aria-hidden="true"></div>
+<main><div class="post-layout"><article class="article"><header class="article-head"><h1>${esc(p.title)}</h1>
+<div class="meta"><time>${fmtDate(p.date)}</time>${p.authorName ? `<span>${esc(p.authorName)}</span>` : ''}<span>${esc(S.data.site.name || '')}</span></div></header>
+<div class="prose">${r.html}</div></article></div></main>
+<div id="tip" role="tooltip" hidden></div>
+<script>${script.replace(/<\/script/gi, '<\\/script')}</script>
+</body></html>`;
+    download(`${p.slug}.html`, html, 'text/html;charset=utf-8');
+    toast('HTML で書き出しました。ブラウザで開くと、クイズや計算もそのまま動きます');
+  } catch { toast('書き出せませんでした。もう一度試してください'); }
+}
+
 /* 読むだけの記事・控えの復元 */
 function setupEditorExtras(p, src, refresh) {
   const note = $('ed-note');
@@ -343,7 +404,7 @@ function setupEditorExtras(p, src, refresh) {
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(draftKey(p.id)) || 'null'); } catch {}
   if (!saved || !saved.post) return;
-  const same = ['slug', 'title', 'body', 'draft'].every(k => saved.post[k] === p[k]);
+  const same = POST_FIELDS.every(k => (saved.post[k] ?? null) === (p[k] ?? null));
   if (same) { dropBackup(p.id); return; }
   const when = new Date(saved.at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   note.innerHTML = `<div class="notice"><span>${when} に書いた、保存していない変更が残っています。</span>
@@ -361,6 +422,13 @@ window.addEventListener('beforeunload', e => { if (S.dirty) { e.preventDefault()
 
 /* ---- 画像・動画：ブラウザからストレージへ直接送る（100MBまで） ---- */
 $('file').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) addMedia(f); });
+
+const DOC_TYPES = {
+  pdf: 'application/pdf', csv: 'text/csv', txt: 'text/plain', zip: 'application/zip',
+  doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ppt: 'application/vnd.ms-powerpoint', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+};
 
 function putWithProgress(url, blob, type, onProgress) {
   return new Promise((resolve, reject) => {
@@ -389,7 +457,11 @@ async function addMedia(file) {
       blob = await new Promise(r => c.toBlob(r, png ? 'image/png' : 'image/jpeg', 0.86));
       type = blob.type;
     } catch {}
-  } else if (!/^(image|video)\//.test(type)) { toast('画像か動画を選んでください'); return; }
+  } else if (!/^(image|video)\//.test(type)) {
+    const ext = (file.name.split('.').pop() || '').toLowerCase();
+    type = DOC_TYPES[ext] || '';
+    if (!type) { toast('画像・動画・PDF・Word・Excel・PowerPoint・CSV・テキスト・ZIP のどれかを選んでください'); return; }
+  }
   if (blob.size > 100 * 1024 * 1024) { toast('ファイルは100MBまでです。長い動画は YouTube に上げて、URLを1行で貼ってください'); return; }
   toast('アップロードの準備中…', 0);
   const r = await post('/api/upload-url', { type, size: blob.size });
@@ -406,7 +478,8 @@ async function addMedia(file) {
     }
   } catch { toast('アップロードできませんでした。通信を確かめて、もう一度試してください'); return; }
   const alt = file.name.replace(/\.[^.]+$/, '');
-  insertBlock(src, `![${alt}](${url})`);
+  if (/^(image|video)\//.test(type)) insertBlock(src, `![${alt}](${url})`);
+  else insertBlock(src, `[${file.name.replace(/[\[\]]/g, '')}](${url})`);
   src.dispatchEvent(new Event('input'));
   toast('入れました');
 }
@@ -426,6 +499,10 @@ const PARTS = [
   { g: '枠', ic: '⚠', name: '注意', ds: '気をつけることをオレンジの枠で', keys: 'chuui warn box', text: ':::注意\nここに注意すること\n:::', sel: 'ここに注意すること' },
   { g: '枠', ic: '■', name: 'まとめ', ds: '記事の結論を黒い枠で', keys: 'matome summary box', text: ':::まとめ\nここにまとめ\n:::', sel: 'ここにまとめ' },
   { g: '画像・ボタン', ic: '▣', name: '画像・動画', ds: 'パソコンから選ぶ。原稿にドラッグしても入ります', keys: 'gazou image douga video photo', action: 'file' },
+  { g: '画像・ボタン', ic: '⎙', name: '添付ファイル', ds: 'PDF・Word・Excel・PowerPoint・CSV・ZIP など（100MBまで）', keys: 'tenpu file pdf word excel attach', action: 'file' },
+  { g: '文章', ic: '※', name: '脚注', ds: '文の後ろに小さな番号を付け、注を記事の最後にまとめる', keys: 'kyakuchu footnote chu', text: '注を付けたい文[^1]\n\n[^1]: ここに注の中身', sel: 'ここに注の中身' },
+  { g: '文章', ic: '∑', name: '数式', ds: '$$ で囲むと数式。文中なら $a^2$ のように書く', keys: 'suushiki math tex katex', text: '$$\nE = mc^2\n$$', sel: 'E = mc^2' },
+  { g: '文章', ic: '{}', name: 'コード', ds: '```の後ろに言語名を書くと色分けされる', keys: 'code koodo program', text: '```js\nconsole.log("こんにちは")\n```', sel: 'console.log("こんにちは")' },
   { g: '画像・ボタン', ic: '▦', name: '表', ds: '縦横に整理した情報', keys: 'hyou table', text: '| 項目 | 内容 |\n| --- | --- |\n| A | 説明 |\n| B | 説明 |', sel: '項目' },
   { g: '画像・ボタン', ic: '◉', name: 'ボタン', ds: '申し込みページなどへの大きなボタン', keys: 'botan button cta', text: '[[ボタンの文字]](https://)', sel: 'ボタンの文字' },
   { g: '動く要素', live: 1, ic: 'Q', name: 'クイズ', ds: '選んで答え合わせ。正解の先頭に * を付けます', keys: 'quiz kuizu', text: ':::quiz 問題文\n- 選択肢\n- *正解の選択肢\n- 選択肢\n> 答えたあとに出る解説\n:::', sel: '問題文' },
@@ -449,9 +526,19 @@ function renderEditor() {
       <button class="btn primary" type="button" id="ed-pub">公開する</button>
     </div>
     <div id="ed-note"></div>
-    <details class="settings"><summary>記事の設定（URL・日付・削除）</summary><div class="set-grid">
+    <details class="settings"><summary>記事の設定（整理・読める人・URL・書き出し・削除）</summary><div class="set-grid">
+      <label class="field">カテゴリ（棚）<input id="ed-cat" list="cat-list" value="${esc(p.category || '')}" placeholder="例：マニュアル" maxlength="40">
+        <datalist id="cat-list">${[...new Set(S.data.posts.map(x => x.category).filter(Boolean))].map(c => `<option value="${esc(c)}">`).join('')}</datalist></label>
+      <label class="field">親の記事（章立て）<select id="ed-parent"><option value="">なし（いちばん上）</option>${parentOptions(p)}</select></label>
+      <label class="field" style="flex:0 0 130px;min-width:0">並び順（小さいほど前）<input id="ed-order" type="number" step="any" value="${p.order ?? ''}" placeholder="空なら日付順"></label>
+      <label class="field">読める人<select id="ed-vis"><option value="public"${p.visibility !== 'members' ? ' selected' : ''}>誰でも</option><option value="members"${p.visibility === 'members' ? ' selected' : ''}>ログインしたメンバーだけ</option></select></label>
+    </div><div class="set-grid">
       <label class="field">記事のURLの末尾（半角英数とハイフン）<input id="ed-slug" value="${esc(p.slug)}"></label>
       <label class="field" style="flex:0 0 160px;min-width:0">日付<input id="ed-date" type="date" value="${esc(p.date || today())}"></label>
+    </div><div class="set-grid">
+      <button class="btn" type="button" id="ed-md">Markdown で書き出す</button>
+      <button class="btn" type="button" id="ed-html">HTML で書き出す</button>
+      <span style="flex:1"></span>
       <button class="btn" type="button" id="ed-unpub"${p.draft ? ' hidden' : ''}>非公開に戻す</button>
       <button class="btn" type="button" id="ed-del">この記事を削除</button>
     </div></details>
@@ -504,6 +591,12 @@ function renderEditor() {
     e.target.value = v; p.slug = v; history.replaceState(null, '', '/write#' + v); markDirty();
   });
   $('ed-date').addEventListener('change', e => { p.date = e.target.value; markDirty(); });
+  $('ed-cat').addEventListener('input', e => { p.category = e.target.value.trim(); markDirty(); });
+  $('ed-parent').addEventListener('change', e => { p.parent = e.target.value || null; markDirty(); });
+  $('ed-order').addEventListener('input', e => { p.order = e.target.value === '' ? null : Number(e.target.value); markDirty(); });
+  $('ed-vis').addEventListener('change', e => { p.visibility = e.target.value; markDirty(); });
+  $('ed-md').addEventListener('click', () => exportPost(p, 'md'));
+  $('ed-html').addEventListener('click', () => exportPost(p, 'html'));
   $('ed-back').addEventListener('click', closeEditor);
   $('ed-draft').addEventListener('click', async () => { p.draft = true; S.dirty = true; if (await save()) toast('下書きを保存しました。読者には見えません'); updateState(); });
   $('ed-pub').addEventListener('click', async () => {
@@ -678,6 +771,14 @@ async function start() {
   }
   if (!me.body.user) return renderGate('login');
   S.me = me.body.user;
+  if (nextPath()) { location.href = nextPath(); return; }
+  if (S.me.role === 'reader') {
+    $('nav').innerHTML = '<button class="btn ghost" type="button" id="logout">ログアウト</button>';
+    $('logout').addEventListener('click', async () => { await post('/api/logout'); S.me = null; renderGate('login', 'ログアウトしました。'); });
+    root.innerHTML = `<section class="notfound"><h1>${esc(S.me.name)}さんは閲覧者です</h1><p>メンバーだけが読める記事も読めます。書くことはできません。</p><p><a class="btn primary" href="/">サイトを読む</a> <a class="btn" href="/write#account">自分の設定</a></p></section>`;
+    if (location.hash === '#account') { S.data = { site: {}, posts: [] }; renderAccount(); }
+    return;
+  }
   const r = await api('/api/content');
   if (!r.ok) { root.innerHTML = '<p class="empty-note">記事を読み込めませんでした。少し待ってから再読み込みしてください。</p>'; return; }
   S.data = r.body;

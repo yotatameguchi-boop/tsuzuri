@@ -17,6 +17,10 @@ Demo: https://tsuzuri-omega.vercel.app (sample content is in Japanese)
 - **Multiple writers**: two roles, admin and writer. People join through invite links; writers can edit only their own posts (enforced on the server, not just in the UI).
 - **Instant publishing**: pages are cached on the CDN for a long time and purged by cache tag whenever content changes.
 - **Large media**: browsers upload straight to storage via presigned URLs (up to 100 MB).
+- **Works as a documentation site**: categories, parent pages (chapters) and manual ordering, breadcrumbs, previous/next links and full-text search.
+- **Restricted reading**: make individual posts or the whole site visible to logged-in members only. Read-only accounts are available.
+- **Document syntax**: footnotes, math (KaTeX), syntax highlighting and attachments (PDF, Word, Excel, PowerPoint, CSV, ZIP).
+- **Portable**: export each post as Markdown or a self-contained HTML file (interactive blocks keep working), or the whole site as JSON.
 - **Small**: no framework, two dependencies (`@vercel/blob`, `@vercel/functions`).
 
 ## Writing syntax
@@ -45,6 +49,8 @@ Monthly = Hourly wage * Hours per week * 4 | yen
 2025 | 15
 :::
 ```
+
+Footnotes use `text[^1]` with `[^1]: note`, math uses `$a^2$` or `$$ … $$`, fenced code takes a language name, and a line containing only `[file.pdf](URL)` becomes an attachment card.
 
 Block names also accept Japanese aliases (`:::クイズ`, `:::計算`, `:::グラフ`, `:::ポイント` …).
 
@@ -85,6 +91,7 @@ Optional: set `SITE_URL` to your custom domain so canonical URLs, the sitemap an
 
 ## Limitations
 
+- Images and attachments in members-only posts can be opened by anyone who has the URL (URLs are long and unguessable).
 - Uploads are limited to 100 MB. Post longer videos to YouTube and paste the URL on its own line.
 - No email: invite and password-reset links are shown to the admin, who passes them along.
 - The UI and messages are in Japanese.

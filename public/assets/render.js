@@ -21,13 +21,21 @@ const LIVE_ALIAS = {
 const LIVE_LABEL = { quiz: 'クイズ', calc: '計算', chart: 'グラフ', tabs: 'タブ', steps: '手順', details: '折りたたみ', compare: '比較' };
 
 function makeCtx(posts, resolve, href) {
-  return { posts: posts || [], resolve: resolve || (u => u), href: href || (slug => '/' + slug), headings: [], links: new Set(), uid: 0 };
+  return { posts: posts || [], resolve: resolve || (u => u), href: href || (slug => '/' + slug), headings: [], links: new Set(), uid: 0, notes: new Map(), noteOrder: [] };
 }
 
 function inline(src, ctx) {
-  const codes = [];
+  const codes = [], maths = [];
   let s = src.replace(/`([^`]+)`/g, (_, c) => { codes.push(c); return `\u0000${codes.length - 1}\u0000`; });
+  /* 数式 $...$（「$100」のような金額と取り違えないよう、中身の両端に空白がなく、閉じの後ろに数字が来ないものだけ） */
+  s = s.replace(/(^|[^\\$])\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\d)/g, (_, pre, t) => { maths.push(t); return `${pre}\u0002${maths.length - 1}\u0002`; });
   s = esc(s);
+  s = s.replace(/\[\^([^\]\s]+)\]/g, (_, id) => {
+    if (!ctx.notes.has(id)) return `[^${id}]`;
+    if (!ctx.noteOrder.includes(id)) ctx.noteOrder.push(id);
+    const n = ctx.noteOrder.indexOf(id) + 1;
+    return `<sup class="fn"><a href="#fn-${n}" id="fnref-${n}">${n}</a></sup>`;
+  });
   s = s.replace(/\{([^{}|\n]+)\|([^{}\n]+)\}/g, (_, t, d) => `<button type="button" class="gl" data-tip="${d}">${t}</button>`);
   s = s.replace(/\[\[([^\]]+)\]\](?!\()/g, (_, t) => {
     const title = t.trim();
@@ -44,6 +52,7 @@ function inline(src, ctx) {
   s = s.replace(/~~(.+?)~~/g, '<s>$1</s>');
   s = s.replace(/==(.+?)==/g, '<mark>$1</mark>');
   s = s.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${esc(codes[+i])}</code>`);
+  s = s.replace(/\u0002(\d+)\u0002/g, (_, i) => `<span class="math" data-tex="${esc(maths[+i])}">${esc(maths[+i])}</span>`);
   return s.replace(/\n/g, '<br>');
 }
 
@@ -60,12 +69,16 @@ const RE = {
   media: /^!\[([^\]]*)\]\(([^)\s]*)(?:\s+"([^"]*)")?\)\s*$/,
   button: /^\[\[(.+?)\]\]\((\S+?)\)\s*$/,
   url: /^(https?:\/\/\S+)\s*$/,
+  file: /^\[([^\]]+)\]\((\S+\.(pdf|docx?|xlsx?|pptx?|zip|csv|txt))\)\s*$/i,
+  mathBlock: /^\$\$/,
+  note: /^\[\^([^\]\s]+)\]:\s*(.*)$/,
 };
+const FILE_KIND = { pdf: 'PDF', doc: 'Word', docx: 'Word', xls: 'Excel', xlsx: 'Excel', ppt: 'PowerPoint', pptx: 'PowerPoint', zip: 'ZIP', csv: 'CSV', txt: 'テキスト' };
 
 function startsBlock(lines, i) {
   const l = lines[i];
   return RE.fence.test(l) || RE.open.test(l) || RE.close.test(l) || RE.heading.test(l) || RE.hr.test(l) ||
-    RE.quote.test(l) || RE.li.test(l) || RE.media.test(l) || RE.button.test(l) || RE.url.test(l) ||
+    RE.quote.test(l) || RE.li.test(l) || RE.media.test(l) || RE.button.test(l) || RE.url.test(l) || RE.file.test(l) || RE.mathBlock.test(l) ||
     (RE.tableRow.test(l) && i + 1 < lines.length && RE.tableSep.test(lines[i + 1]));
 }
 
@@ -105,6 +118,11 @@ function linkCard(url) {
   const label = yt ? 'YouTube で見る' : vm ? 'Vimeo で見る' : 'リンク';
   const icon = yt || vm ? '▶' : '↗';
   return `<a class="card" href="${esc(safeUrl(url))}" target="_blank" rel="noopener"><span class="play">${icon}</span><span><span class="h">${label}</span><br><span class="u">${esc(url)}</span></span></a>`;
+}
+
+function fileCard(name, url, ext) {
+  const kind = FILE_KIND[ext.toLowerCase()] || 'ファイル';
+  return `<a class="card file" href="${esc(safeUrl(url))}" target="_blank" rel="noopener"><span class="play">${esc(kind.slice(0, 3))}</span><span><span class="h">${kind}・添付ファイル</span><br><span class="u">${esc(name)}</span></span></a>`;
 }
 
 function sections(lines) {
@@ -217,10 +235,24 @@ function parse(lines, ctx) {
     const line = lines[i];
     if (/^\s*$/.test(line)) { i++; continue; }
     if (RE.fence.test(line)) {
+      const lang = (line.match(/^```\s*([\w+#.-]+)/) || [])[1];
       const buf = []; i++;
       while (i < lines.length && !/^```\s*$/.test(lines[i])) buf.push(lines[i++]);
       i++;
-      out.push(`<pre><code>${esc(buf.join('\n'))}</code></pre>`);
+      out.push(`<pre><code${lang ? ` class="language-${esc(lang.toLowerCase())}"` : ''}>${esc(buf.join('\n'))}</code></pre>`);
+      continue;
+    }
+    if (RE.mathBlock.test(line)) {
+      let tex;
+      const one = line.match(/^\$\$(.+)\$\$\s*$/);
+      if (one) { tex = one[1]; i++; }
+      else {
+        const buf = [line.replace(/^\$\$/, '')]; i++;
+        while (i < lines.length && !/\$\$\s*$/.test(lines[i])) buf.push(lines[i++]);
+        if (i < lines.length) buf.push(lines[i++].replace(/\$\$\s*$/, ''));
+        tex = buf.join('\n').trim();
+      }
+      out.push(`<div class="math math-block" data-tex="${esc(tex)}">${esc(tex)}</div>`);
       continue;
     }
     if ((m = line.match(RE.open))) {
@@ -285,6 +317,7 @@ function parse(lines, ctx) {
       continue;
     }
     if ((m = line.match(RE.url))) { out.push(linkCard(m[1])); i++; continue; }
+    if ((m = line.match(RE.file))) { out.push(fileCard(m[1], m[2], m[3])); i++; continue; }
     const buf = [line]; i++;
     while (i < lines.length && !/^\s*$/.test(lines[i]) && !startsBlock(lines, i)) buf.push(lines[i++]);
     out.push(`<p>${inline(buf.join('\n'), ctx)}</p>`);
@@ -294,8 +327,27 @@ function parse(lines, ctx) {
 
 function renderBody(body, posts, resolve, href) {
   const ctx = makeCtx(posts, resolve, href);
-  const html = parse(String(body || '').replace(/\r\n?/g, '\n').split('\n'), ctx);
+  const lines = [];
+  let fence = false;
+  for (const l of String(body || '').replace(/\r\n?/g, '\n').split('\n')) {
+    if (/^```/.test(l)) fence = !fence;
+    const m = !fence && l.match(RE.note);
+    if (m) ctx.notes.set(m[1], m[2]); else lines.push(l);
+  }
+  let html = parse(lines, ctx);
+  if (ctx.noteOrder.length) {
+    const items = ctx.noteOrder.map((id, k) => `<li id="fn-${k + 1}">${inline(ctx.notes.get(id), ctx)} <a class="fn-back" href="#fnref-${k + 1}" aria-label="本文に戻る">↩</a></li>`);
+    html += `\n<section class="footnotes" aria-label="注"><h2 class="fn-h">注</h2><ol>${items.join('')}</ol></section>`;
+  }
   return { html, headings: ctx.headings, links: ctx.links };
+}
+
+/* 検索用の地の文（記法を取り除いた全文） */
+function plainText(body) {
+  return String(body || '').replace(/^```.*$/gm, ' ').replace(/^:::\s*\S*\s*(.*)$/gm, ' $1 ').replace(/^@\s+/gm, '')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/\[\[([^\]]+)\]\](\([^)]*\))?/g, '$1').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/\{([^{}|]+)\|([^{}]+)\}/g, '$1（$2）').replace(/\[\^[^\]]+\]:?/g, '').replace(/^[#>|\s*-]+|[*=~`|$]/gm, ' ')
+    .replace(/\s+/g, ' ').trim();
 }
 
 function liveKinds(body) {
@@ -356,18 +408,20 @@ function evaluate(expr, vars) {
 /* 一覧や検索結果に出す抜粋。部品（::: 〜 :::）やコードの中身は使わず、地の文だけを拾う */
 function excerpt(body, n = 120) {
   const out = [];
-  let depth = 0, fence = false;
+  let depth = 0, fence = false, mathBlock = false;
   for (const raw of String(body || '').split('\n')) {
     const l = raw.trim();
     if (/^```/.test(l)) { fence = !fence; continue; }
+    if (/^\$\$/.test(l)) { if (!/^\$\$.+\$\$$/.test(l)) mathBlock = !mathBlock; continue; }
+    if (mathBlock) { if (/\$\$$/.test(l)) mathBlock = false; continue; }
     if (fence) continue;
     if (/^:::\s*\S/.test(l)) { depth++; continue; }
     if (/^:::\s*$/.test(l)) { depth = Math.max(0, depth - 1); continue; }
-    if (depth || !l || /^(#|!\[|\||>|[-*+]\s|\d+[.)]\s|@|\[\[|https?:)/.test(l)) continue;
+    if (depth || !l || /^(#|!\[|\||>|[-*+]\s|\d+[.)]\s|@|\[\[|\[\^|https?:)/.test(l)) continue;
     out.push(l);
   }
-  return out.join(' ').replace(/\{([^{}|]+)\|[^{}]+\}/g, '$1').replace(/\[\[([^\]]+)\]\]/g, '$1')
+  return out.join(' ').replace(/\[\^[^\]\s]+\]/g, '').replace(/(^|[^$])\$(?!\s)([^$]+?)(?<!\s)\$(?!\d)/g, '$1$2').replace(/\{([^{}|]+)\|[^{}]+\}/g, '$1').replace(/\[\[([^\]]+)\]\]/g, '$1')
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/[*=~`]/g, '').slice(0, n);
 }
 
-export { excerpt, esc, safeUrl, inline, parse, renderBody, liveKinds, evaluate, LIVE_LABEL };
+export { plainText, excerpt, esc, safeUrl, inline, parse, renderBody, liveKinds, evaluate, LIVE_LABEL };

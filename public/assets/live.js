@@ -2,7 +2,48 @@
 import { esc, evaluate } from './render.js';
 
 /* ========== 動く要素を有効にする ========== */
+/* 数式（KaTeX）とコードの色分け（highlight.js）は、その部品があるページでだけ読み込む */
+const LIB = {
+  katexJs: 'https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js',
+  katexCss: 'https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css',
+  hljs: 'https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.10.0/highlight.min.js',
+};
+const loaded = {};
+function loadScript(src) {
+  return loaded[src] || (loaded[src] = new Promise((ok, ng) => {
+    const el = document.createElement('script');
+    el.src = src; el.async = true; el.crossOrigin = 'anonymous';
+    el.onload = ok; el.onerror = ng;
+    document.head.appendChild(el);
+  }));
+}
+function loadCss(href) {
+  if (loaded[href]) return;
+  loaded[href] = true;
+  const el = document.createElement('link');
+  el.rel = 'stylesheet'; el.href = href; el.crossOrigin = 'anonymous';
+  document.head.appendChild(el);
+}
+async function enhance(root) {
+  const maths = root.querySelectorAll('.math[data-tex]');
+  if (maths.length) {
+    loadCss(LIB.katexCss);
+    try {
+      await loadScript(LIB.katexJs);
+      maths.forEach(el => window.katex.render(el.dataset.tex, el, { displayMode: el.classList.contains('math-block'), throwOnError: false }));
+    } catch {}
+  }
+  const codes = root.querySelectorAll('pre code[class*="language-"]');
+  if (codes.length) {
+    try {
+      await loadScript(LIB.hljs);
+      codes.forEach(el => { if (!el.dataset.hl) { window.hljs.highlightElement(el); el.dataset.hl = '1'; } });
+    } catch {}
+  }
+}
+
 export function hydrate(root) {
+  enhance(root);
   root.querySelectorAll('[data-live="quiz"]').forEach(el => {
     const opts = [...el.querySelectorAll('.quiz-opt')];
     const res = el.querySelector('.quiz-res');
