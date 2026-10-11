@@ -38,7 +38,9 @@ test('読者のページ：一覧・記事・404・サイトマップ・RSS', as
   assert.equal(home.headers['Vercel-Cache-Tag'], 'tsuzuri-pages');
   const post = await call('GET', '/minutes-in-10-minutes');
   assert.equal(post.status, 200);
-  assert.match(post.text, /data-live="quiz"/);
+  assert.match(post.text, /data-live="quiz"/, 'クイズそのものは動く');
+  assert.doesNotMatch(post.text, /class="chip"|class="kind"/, '「クイズ」「グラフ」などの種類のラベルは読者に出さない');
+  assert.doesNotMatch(home.text, /class="chip"/);
   assert.match(post.text, /href="\/how-to-write"/);
   assert.equal((await call('GET', '/no-such-post')).status, 404);
   assert.match((await call('GET', '/sitemap.xml')).text, /how-to-write/);

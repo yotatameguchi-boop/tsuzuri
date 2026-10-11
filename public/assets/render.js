@@ -119,7 +119,7 @@ function sections(lines) {
 }
 
 const liveFrame = (kind, title, body, extra = '') =>
-  `<div class="live" data-live="${kind}"${extra}><div class="live-h"><span class="kind">${LIVE_LABEL[kind]}</span><span class="ttl">${title}</span></div>${body}</div>`;
+  `<div class="live" data-live="${kind}"${extra}><div class="live-h"><span class="ttl">${title}</span></div>${body}</div>`;
 
 function renderLive(kind, arg, inner, ctx) {
   const id = 'lv' + (++ctx.uid);
