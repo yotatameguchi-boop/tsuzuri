@@ -11,7 +11,7 @@ const readMin = body => Math.max(1, Math.round(String(body || '').replace(/\s/g,
 const isAdmin = () => S.me && S.me.role === 'admin';
 const canEdit = p => isAdmin() || !p.rev || p.author === S.me.id;
 const ROLE = { admin: '管理者', writer: '書き手', reader: '閲覧者' };
-const POST_FIELDS = ['slug', 'title', 'body', 'date', 'draft', 'category', 'parent', 'order', 'visibility'];
+const POST_FIELDS = ['slug', 'title', 'body', 'date', 'draft', 'category', 'parent', 'order', 'visibility', 'media'];
 const pick = p => Object.fromEntries(POST_FIELDS.map(k => [k, p[k] ?? null]));
 const nextPath = () => { const n = new URLSearchParams(location.search).get('next'); return n && /^\/(?!\/)/.test(n) ? n : null; };
 
@@ -91,7 +91,7 @@ function renderNav() {
   nav.innerHTML = `<a class="btn ghost" href="/" target="_blank" rel="noopener">サイトを見る ↗</a>
     <details class="menu"><summary class="btn ghost">${esc(S.me.name)} ▾</summary><div class="menu-list">
       <a href="/write">記事の一覧</a>
-      ${isAdmin() ? '<a href="/write#members">メンバー</a>' : ''}
+      ${isAdmin() ? '<a href="/write#media">メディアの設定</a><a href="/write#members">メンバー</a>' : ''}
       <a href="/write#account">自分の設定</a>
       <button type="button" id="logout">ログアウト</button>
     </div></details>
@@ -101,47 +101,106 @@ function renderNav() {
   nav.querySelectorAll('.menu-list a').forEach(a => a.addEventListener('click', () => nav.querySelector('details').removeAttribute('open')));
 }
 
+/* ---- メディアとURL（読者のページと同じ決まり） ---- */
+const COLOR_NAMES = { blue: '青', red: '赤', green: '緑', orange: '橙', purple: '紫', teal: '青緑', ink: '黒' };
+const COLOR_HEX = { blue: '#1f56e0', red: '#c8332f', green: '#12804e', orange: '#b9520c', purple: '#6847b8', teal: '#0d7680', ink: '#0b0d12' };
+const multiMedia = () => S.data.media.length > 1;
+const mediaById = id => S.data.media.find(m => m.id === id) || S.data.media[0];
+const readerHref = p => `${multiMedia() ? '/' + mediaById(p.media).slug : ''}/${p.slug}`;
+const markHtml = m => `<span class="k${[...(m.mark || '綴')].length > 1 ? ' two' : ''}" style="background:${COLOR_HEX[m.color] || COLOR_HEX.blue}">${esc(m.mark || '綴')}</span>`;
+
 /* ---- 記事の一覧 ---- */
 function renderList() {
   document.title = '記事の一覧 | ' + (S.data.site.name || 'Tsuzuri');
   const site = S.data.site;
-  const posts = S.data.posts.filter(p => canEdit(p) || !p.draft).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-  root.innerHTML = `<section class="home-head"><h1>${esc(site.name || '無題のサイト')}</h1>${site.tagline ? `<p>${esc(site.tagline)}</p>` : ''}` +
-    (S.data.site.visibility === 'members' ? '<p class="sub">このサイトは、ログインしたメンバーだけが読めます。</p>' : '') +
-    (isAdmin() ? `<div class="row" style="margin-top:10px;margin-left:-10px;display:flex;gap:4px;flex-wrap:wrap"><button class="btn ghost" type="button" id="site-open">サイトの設定</button><a class="btn ghost" href="/api/export" download>全記事を書き出す（JSON）</a></div>
-    <form class="site-edit" id="site-form" hidden><input name="name" aria-label="サイト名" placeholder="サイト名" value="${esc(site.name || '')}" required>
-    <input name="tagline" aria-label="サイトの説明" placeholder="サイトの説明（1行）" value="${esc(site.tagline || '')}">
-    <label class="field">サイトを読める人<select name="visibility"><option value="public"${site.visibility !== 'members' ? ' selected' : ''}>誰でも（検索エンジンにも載る）</option><option value="members"${site.visibility === 'members' ? ' selected' : ''}>ログインしたメンバーだけ（社内向け）</option></select></label>
-    <div class="err" role="alert"></div><div class="row"><button class="btn primary" type="submit">保存</button><button class="btn ghost" type="button" id="site-cancel">やめる</button></div></form>` : '') +
+  const filter = S.mediaFilter && S.data.media.some(m => m.id === S.mediaFilter) ? S.mediaFilter : null;
+  const posts = S.data.posts.filter(p => (canEdit(p) || !p.draft) && (!filter || p.media === filter)).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const title = multiMedia() ? (filter ? mediaById(filter).name : site.name || 'すべてのメディア') : S.data.media[0].name;
+  const tabs = multiMedia() ? `<div class="media-tabs" role="tablist"><button type="button" role="tab" data-filter="" aria-selected="${!filter}">すべて</button>${S.data.media.map(m =>
+    `<button type="button" role="tab" data-filter="${esc(m.id)}" aria-selected="${filter === m.id}">${markHtml(m)}${esc(m.name)}</button>`).join('')}</div>` : '';
+  root.innerHTML = `<section class="home-head"><h1>${esc(title)}</h1>${tabs}` +
+    (isAdmin() ? `<div class="row" style="margin-top:10px;margin-left:-10px;display:flex;gap:4px;flex-wrap:wrap"><a class="btn ghost" href="/write#media">メディアの設定</a><a class="btn ghost" href="/api/export" download>全記事を書き出す（JSON）</a></div>` : '') +
     `</section><section class="posts" aria-label="記事一覧">${posts.length ? posts.map(p => {
       const kinds = liveKinds(p.body);
       const mine = canEdit(p);
       const chips = [
         ...(p.draft ? ['<span class="chip draft">下書き（読者には見えません）</span>'] : []),
+        ...(multiMedia() && !filter ? [`<span class="chip draft">${esc(mediaById(p.media).name)}</span>`] : []),
         ...(p.visibility === 'members' ? ['<span class="chip draft">メンバー限定</span>'] : []),
         ...(p.category ? [`<span class="chip draft">${esc(p.category)}</span>`] : []),
         ...(p.authorName ? [`<span class="chip draft">${esc(p.authorName)}</span>`] : []),
         ...kinds.map(k => `<span class="chip">${k}</span>`),
       ];
-      const href = mine ? `/write#${esc(p.slug)}` : `/${esc(p.slug)}`;
+      const href = mine ? `/write#${esc(p.slug)}` : esc(readerHref(p));
       return `<div class="pr w"><a class="post-row" href="${href}"${mine ? ` data-edit="${esc(p.id)}"` : ' target="_blank" rel="noopener"'}><time>${fmtDate(p.date)}</time><div><h2 class="t">${esc(p.title || '無題')}</h2></div>` +
         `<p class="x">${esc(excerpt(p.body, 100))}</p><div class="chips">${chips.join('')}</div></a>` +
-        (mine ? `<button class="btn row-edit" type="button" data-edit="${esc(p.id)}">編集</button>` : `<a class="btn row-edit" href="/${esc(p.slug)}" target="_blank" rel="noopener">読む</a>`) + `</div>`;
+        (mine ? `<button class="btn row-edit" type="button" data-edit="${esc(p.id)}">編集</button>` : `<a class="btn row-edit" href="${esc(readerHref(p))}" target="_blank" rel="noopener">読む</a>`) + `</div>`;
     }).join('') : `<div class="empty-note"><p>まだ記事がありません</p><button class="btn primary" type="button" id="first-post">最初の記事を書く</button></div>`}</section>`;
   root.querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', e => { e.preventDefault(); openEditor(b.dataset.edit); }));
+  root.querySelectorAll('[data-filter]').forEach(b => b.addEventListener('click', () => { S.mediaFilter = b.dataset.filter || null; renderList(); }));
   $('first-post')?.addEventListener('click', newPost);
-  const form = $('site-form');
-  if (form) {
-    $('site-open').addEventListener('click', () => { form.hidden = false; $('site-open').parentElement.hidden = true; form.querySelector('input').focus(); });
-    $('site-cancel').addEventListener('click', renderList);
-    bindForm(form, async f => {
-      const r = await post('/api/site', f, 'PUT');
-      if (!r.ok) return r.body.message || '保存できませんでした';
-      S.data.site = { ...S.data.site, name: f.name.trim(), tagline: f.tagline.trim(), visibility: f.visibility };
-      toast('サイト名と説明を保存しました');
-      renderList();
-    });
-  }
+}
+
+/* ---- メディアの設定（管理者） ---- */
+function mediaForm(m, isNew) {
+  const id = isNew ? 'new' : m.id;
+  return `<form class="media-form" data-id="${esc(id)}">
+    <div class="mf-head">${isNew ? '<strong>新しいメディア</strong>' : `${markHtml(m)}<strong>${esc(m.name)}</strong><span class="sub">${multiMedia() ? `/${esc(m.slug)}/` : 'サイトの直下（メディアが1つのとき）'}</span>`}</div>
+    <div class="set-grid">
+      <label class="field">名前<input name="name" value="${esc(m.name || '')}" required maxlength="40" placeholder="例：あしかもメディア"></label>
+      <label class="field" style="flex:0 0 120px;min-width:0">ロゴの文字（1〜2字）<input name="mark" value="${esc(m.mark || '')}" maxlength="2" placeholder="例：あ"></label>
+      <label class="field">URL（半角英小文字・数字・ハイフン）<input name="slug" value="${esc(m.slug || '')}" required pattern="[a-z0-9][a-z0-9\\-]{1,29}" placeholder="例：ashikamo" autocapitalize="none"></label>
+    </div>
+    <div class="set-grid">
+      <label class="field">説明（1行）<input name="tagline" value="${esc(m.tagline || '')}" maxlength="200" placeholder="例：足利と鴨川の、地元の話"></label>
+      <label class="field" style="flex:0 0 140px;min-width:0">色<select name="color">${Object.entries(COLOR_NAMES).map(([k, v]) => `<option value="${k}"${(m.color || 'blue') === k ? ' selected' : ''}>${v}</option>`).join('')}</select></label>
+      <label class="field">読める人<select name="visibility"><option value="public"${m.visibility !== 'members' ? ' selected' : ''}>誰でも</option><option value="members"${m.visibility === 'members' ? ' selected' : ''}>ログインしたメンバーだけ</option></select></label>
+    </div>
+    <div class="err" role="alert"></div>
+    <div class="row" style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" type="submit">${isNew ? 'メディアを作る' : '保存'}</button>
+      ${isNew ? '' : `<a class="btn ghost" href="${multiMedia() ? '/' + esc(m.slug) + '/' : '/'}" target="_blank" rel="noopener">見る ↗</a>${S.data.media.length > 1 ? `<button class="btn ghost" type="button" data-del="${esc(m.id)}">このメディアを削除</button>` : ''}`}</div>
+  </form>`;
+}
+
+function renderMedia() {
+  document.title = 'メディアの設定 | ' + (S.data.site.name || 'Tsuzuri');
+  const site = S.data.site;
+  const blank = { name: '', slug: '', mark: '', tagline: '', color: Object.keys(COLOR_NAMES)[S.data.media.length % 7], visibility: 'public' };
+  root.innerHTML = `<section class="manage"><h1>メディアの設定</h1>
+    <p class="sub">1つの Tsuzuri から、名前のちがう複数のメディアを出せます。メディアが2つ以上になると、それぞれ <code>/URL/</code> の下に置かれ、サイトのいちばん上は全メディアの入口になります（前のURLは自動で新しい場所へ案内します）。</p>
+    ${S.data.media.map(m => mediaForm(m, false)).join('')}
+    <h2 class="sec">メディアを増やす</h2>${mediaForm(blank, true)}
+    <h2 class="sec">全体の名前</h2>
+    <form class="stack" id="site-form"><p class="sub">メディアが2つ以上のとき、サイトのいちばん上（全メディアの入口）に出る名前です。</p>
+      <label class="field">名前<input name="name" value="${esc(site.name || '')}" required maxlength="60"></label>
+      <label class="field">説明（1行）<input name="tagline" value="${esc(site.tagline || '')}" maxlength="200"></label>
+      <div class="err" role="alert"></div><button class="btn primary" type="submit">保存</button></form>
+  </section>`;
+  root.querySelectorAll('.media-form').forEach(form => bindForm(form, async f => {
+    const isNew = form.dataset.id === 'new';
+    const id = isNew ? 'm' + Date.now().toString(36) : form.dataset.id;
+    const r = await post(`/api/media/${id}`, { ...f, slug: f.slug.toLowerCase() }, 'PUT');
+    if (!r.ok) return r.body.message || '保存できませんでした';
+    await reloadContent();
+    toast(isNew ? `「${f.name}」を作りました` : '保存しました');
+    renderMedia();
+  }));
+  root.querySelectorAll('[data-del]').forEach(b => b.addEventListener('click', async () => {
+    if (!b.classList.contains('armed')) { b.classList.add('armed'); b.textContent = 'もう一度押すと削除します'; setTimeout(() => { b.classList.remove('armed'); b.textContent = 'このメディアを削除'; }, 3000); return; }
+    const r = await api(`/api/media/${b.dataset.del}`, { method: 'DELETE', body: '{}' });
+    if (!r.ok) { toast(r.body.message || '削除できませんでした'); return; }
+    await reloadContent(); toast('メディアを削除しました'); renderMedia();
+  }));
+  bindForm($('site-form'), async f => {
+    const r = await post('/api/site', { ...site, ...f }, 'PUT');
+    if (!r.ok) return r.body.message || '保存できませんでした';
+    S.data.site = { ...site, name: f.name.trim(), tagline: f.tagline.trim() };
+    toast('保存しました');
+  });
+}
+async function reloadContent() {
+  const r = await api('/api/content');
+  if (r.ok) S.data = { ...r.body, posts: [...r.body.posts, ...S.data.posts.filter(p => !p.rev)] };
 }
 
 /* ---- メンバー（管理者） ---- */
@@ -232,6 +291,7 @@ function route() {
   renderNav();
   if (S.view === 'edit') return renderEditor();
   if (S.view === 'members' && isAdmin()) return renderMembers();
+  if (S.view === 'media' && isAdmin()) return renderMedia();
   if (S.view === 'account') return renderAccount();
   renderList();
 }
@@ -240,7 +300,7 @@ function applyHash() {
   if (inviteToken()) { toast('すでにログインしています。招待リンクは、招待する人に渡してください'); history.replaceState(null, '', '/write'); }
   const h = decodeURIComponent(location.hash.slice(1));
   if (h === 'new') return newPost();
-  if (h === 'members' || h === 'account') { S.view = h; return route(); }
+  if (h === 'members' || h === 'account' || h === 'media') { S.view = h; return route(); }
   const p = h && S.data.posts.find(x => x.slug === h || x.id === h);
   if (p && canEdit(p)) { S.editId = p.id; S.view = 'edit'; return route(); }
   S.view = 'list'; route();
@@ -267,7 +327,7 @@ function markDirty() { S.dirty = true; backup(); updateState(); }
 
 function newPost() {
   const id = 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-  S.data.posts.push({ id, slug: 'p-' + Date.now().toString(36), title: '', date: today(), draft: true, body: '', author: S.me.id, authorName: S.me.name, rev: 0 });
+  S.data.posts.push({ id, slug: 'p-' + Date.now().toString(36), title: '', date: today(), draft: true, body: '', author: S.me.id, authorName: S.me.name, rev: 0, media: S.mediaFilter || S.data.media[0].id });
   S.dirty = false;
   openEditor(id);
 }
@@ -521,12 +581,13 @@ function renderEditor() {
     <div class="ed-bar">
       <button class="btn ghost" type="button" id="ed-back">← 戻る</button>
       <span class="state" id="ed-state"></span>
-      <a class="btn view" id="ed-view" href="/${esc(p.slug)}" target="_blank" rel="noopener"${p.draft ? ' hidden' : ''}>記事を見る ↗</a>
+      <a class="btn view" id="ed-view" href="${esc(readerHref(p))}" target="_blank" rel="noopener"${p.draft ? ' hidden' : ''}>記事を見る ↗</a>
       <button class="btn" type="button" id="ed-draft">下書き保存</button>
       <button class="btn primary" type="button" id="ed-pub">公開する</button>
     </div>
     <div id="ed-note"></div>
     <details class="settings"><summary>記事の設定（整理・読める人・URL・書き出し・削除）</summary><div class="set-grid">
+      ${multiMedia() ? `<label class="field">メディア<select id="ed-media">${S.data.media.map(m => `<option value="${esc(m.id)}"${p.media === m.id ? ' selected' : ''}>${esc(m.name)}</option>`).join('')}</select></label>` : ''}
       <label class="field">カテゴリ（棚）<input id="ed-cat" list="cat-list" value="${esc(p.category || '')}" placeholder="例：マニュアル" maxlength="40">
         <datalist id="cat-list">${[...new Set(S.data.posts.map(x => x.category).filter(Boolean))].map(c => `<option value="${esc(c)}">`).join('')}</datalist></label>
       <label class="field">親の記事（章立て）<select id="ed-parent"><option value="">なし（いちばん上）</option>${parentOptions(p)}</select></label>
@@ -592,6 +653,7 @@ function renderEditor() {
   });
   $('ed-date').addEventListener('change', e => { p.date = e.target.value; markDirty(); });
   $('ed-cat').addEventListener('input', e => { p.category = e.target.value.trim(); markDirty(); });
+  $('ed-media')?.addEventListener('change', e => { p.media = e.target.value; markDirty(); });
   $('ed-parent').addEventListener('change', e => { p.parent = e.target.value || null; markDirty(); });
   $('ed-order').addEventListener('input', e => { p.order = e.target.value === '' ? null : Number(e.target.value); markDirty(); });
   $('ed-vis').addEventListener('change', e => { p.visibility = e.target.value; markDirty(); });
@@ -742,7 +804,7 @@ function updateState() {
   const pub = $('ed-pub');
   if (pub) pub.textContent = p.draft ? '公開する' : '更新を公開する';
   const vw = $('ed-view');
-  if (vw) { vw.hidden = p.draft; vw.href = '/' + p.slug; }
+  if (vw) { vw.hidden = p.draft; vw.href = readerHref(p); }
   const dr = $('ed-draft');
   if (dr) dr.hidden = !p.draft;
   const un = $('ed-unpub');

@@ -4,11 +4,14 @@ import {
   currentUser, issueCookie, clearCookie, hashPassword, verifyPassword, checkNewAccount, checkPassword,
   setupKeyConfigured, checkSetupKey, makeInvite, findInvite, newId, publicUser,
 } from '../lib/auth.js';
-import { homePage, postPage, categoryPage, searchPage, gatePage, notFoundPage, sitemap, feed, visiblePosts, siteIsPrivate, hasMembersPosts } from '../lib/pages.js';
+import { portalPage, homePage, postPage, categoryPage, searchPage, gatePage, notFoundPage, sitemap, feed, visiblePosts, siteIsPrivate, mediaIsPrivate, hasMembersPosts, multi, mediaOf, postHref, COLORS } from '../lib/pages.js';
 
 const PAGE_TAG = 'tsuzuri-pages';
 const SLUG = /^[A-Za-z0-9._~-]{1,80}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const MEDIA_SLUG = /^[a-z0-9][a-z0-9-]{1,29}$/;
+/* メディアのURLに使えない名前（サイトの仕組みで使っている場所） */
+const RESERVED = new Set(['write', 'api', 'assets', 'img', 'media', 'search', 'c', 'feed.xml', 'sitemap.xml', 'robots.txt', 'favicon.svg', 'login', 'admin']);
 
 function origin(req) {
   if (process.env.SITE_URL) return process.env.SITE_URL.replace(/\/$/, '');
@@ -30,8 +33,10 @@ async function page(res, status, body, type = 'text/html; charset=utf-8', cachea
   if (process.env.VERCEL) {
     try { const { addCacheTag } = await import('@vercel/functions'); await addCacheTag(PAGE_TAG); } catch {}
   }
+  /* ブラウザには毎回確かめさせ（古いページを見せない）、CDN にだけ長く置く */
   send(res, status, body, type, {
-    'Cache-Control': status === 200 ? 'public, max-age=0, s-maxage=86400, stale-while-revalidate=604800' : 'public, max-age=0, s-maxage=60',
+    'Cache-Control': 'public, max-age=0, must-revalidate',
+    'Vercel-CDN-Cache-Control': status === 200 ? 's-maxage=86400, stale-while-revalidate=604800' : 's-maxage=60',
     'Vercel-Cache-Tag': PAGE_TAG,
   });
 }
@@ -214,6 +219,8 @@ export default async function handler(req, res) {
           const p = b.post || {};
           if (!SLUG.test(String(p.slug || ''))) return fail(400, 'invalid', '記事のURLは半角英数とハイフンにしてください');
           if (doc.posts.some(o => o.id !== id && o.slug === p.slug)) return fail(400, 'invalid', 'そのURLはほかの記事で使われています');
+          if (doc.media.some(m => m.slug === p.slug) || RESERVED.has(p.slug)) return fail(400, 'invalid', 'そのURLはメディアやサイトの仕組みで使われています');
+          const media = doc.media.some(m => m.id === p.media) ? p.media : (cur ? cur.media : doc.media[0].id);
           if (typeof p.title !== 'string' || p.title.length > 200 || typeof p.body !== 'string') return fail(400, 'invalid', 'タイトルか本文の形が正しくありません');
           if (p.date && !DATE.test(p.date)) return fail(400, 'invalid', '日付の形が正しくありません');
           const category = String(p.category || '').trim();
@@ -230,7 +237,7 @@ export default async function handler(req, res) {
           const visibility = p.visibility === 'members' ? 'members' : 'public';
           const next = {
             id, slug: p.slug, title: p.title, body: p.body, date: p.date || new Date().toISOString().slice(0, 10), draft: !!p.draft,
-            category, parent, order, visibility,
+            category, parent, order, visibility, media,
             author: cur ? cur.author : me.id, authorName: cur ? cur.authorName : me.name,
             rev: (cur ? cur.rev : 0) + 1, updated: new Date().toISOString().slice(0, 10),
           };
@@ -239,6 +246,34 @@ export default async function handler(req, res) {
         });
         if (res.headersSent) return;
         return json(res, 200, { ok: true, post: saved });
+      }
+
+      const mm = pathname.match(/^\/api\/media\/([A-Za-z0-9_-]{1,40})$/);
+      if (mm && (method === 'PUT' || method === 'DELETE')) {
+        if (me.role !== 'admin') return json(res, 403, { error: 'forbidden', message: 'メディアの設定は管理者だけが変えられます' });
+        const id = mm[1];
+        const b = await readJson(req);
+        await run('content', doc => {
+          const cur = doc.media.find(m => m.id === id);
+          if (method === 'DELETE') {
+            if (!cur) return fail(404, 'not_found', 'そのメディアは見つかりません');
+            if (doc.media.length === 1) return fail(400, 'last', 'メディアが1つもなくなるので、削除できません');
+            if (doc.posts.some(p => p.media === id)) return fail(400, 'not_empty', 'このメディアには記事があります。先に記事をほかのメディアへ移すか、削除してください');
+            doc.media = doc.media.filter(m => m !== cur);
+            return;
+          }
+          const name = String(b.name || '').trim(), tagline = String(b.tagline || '').trim(), slug = String(b.slug || '').trim().toLowerCase();
+          const mark = [...String(b.mark || '').trim()].slice(0, 2).join('') || [...name][0] || '綴';
+          if (!name || name.length > 40) return fail(400, 'invalid', 'メディアの名前を1〜40文字で入れてください');
+          if (tagline.length > 200) return fail(400, 'invalid', '説明は200文字までです');
+          if (!MEDIA_SLUG.test(slug) || RESERVED.has(slug)) return fail(400, 'invalid', 'URLは半角の英小文字・数字・ハイフンで2〜30文字にしてください（write・api など一部の名前は使えません）');
+          if (doc.media.some(m => m.id !== id && m.slug === slug)) return fail(400, 'invalid', 'そのURLはほかのメディアで使われています');
+          if (doc.posts.some(p => p.slug === slug)) return fail(400, 'invalid', 'そのURLは記事で使われています');
+          const next = { id, slug, name, tagline, mark, color: COLORS[b.color] ? b.color : 'blue', visibility: b.visibility === 'members' ? 'members' : 'public' };
+          if (cur) Object.assign(cur, next); else doc.media.push(next);
+        });
+        if (res.headersSent) return;
+        return json(res, 200, { ok: true });
       }
 
       if (pathname === '/api/site' && method === 'PUT') {
@@ -329,30 +364,52 @@ export default async function handler(req, res) {
     const { data } = await getDoc('content');
     const o = origin(req);
     const viewer = /(?:^|;\s*)tz_s=/.test(req.headers.cookie || '') ? currentUser(req, (await getDoc('users')).data) : null;
-    const personal = siteIsPrivate(data) || hasMembersPosts(data);
+    const personal = hasMembersPosts(data);
     const html = (status, body) => page(res, status, body, 'text/html; charset=utf-8', !personal && status === 200);
+    const q = String(url.searchParams.get('q') || '').slice(0, 100);
+    const redirect = to => { res.writeHead(301, { Location: to + (url.search.replace(/[?&]__p=[^&]*/, '').replace(/^&/, '?') || ''), 'Cache-Control': 'public, max-age=3600' }); res.end(); };
 
     if (pathname === '/robots.txt') {
-      return send(res, 200, siteIsPrivate(data) ? 'User-agent: *\nDisallow: /\n' : `User-agent: *\nDisallow: /write\nDisallow: /api/\nDisallow: /search\nSitemap: ${o}/sitemap.xml\n`, 'text/plain; charset=utf-8');
+      return send(res, 200, siteIsPrivate(data) ? 'User-agent: *\nDisallow: /\n' : `User-agent: *\nDisallow: /write\nDisallow: /api/\nDisallow: /search\nDisallow: /*/search\nSitemap: ${o}/sitemap.xml\n`, 'text/plain; charset=utf-8');
     }
     if (pathname === '/sitemap.xml') return page(res, 200, sitemap(data, o), 'application/xml; charset=utf-8');
-    if (pathname === '/feed.xml') return page(res, 200, feed(data, o), 'application/rss+xml; charset=utf-8');
+    if (pathname === '/feed.xml') return page(res, 200, feed(data, o, multi(data) ? null : data.media[0]), 'application/rss+xml; charset=utf-8');
     if (siteIsPrivate(data) && !viewer) return page(res, 401, gatePage(data, o, pathname), 'text/html; charset=utf-8', false);
 
-    if (pathname === '/' || pathname === '') return html(200, homePage(data, o, viewer));
-    if (pathname === '/search') return html(200, searchPage(data, o, viewer, String(url.searchParams.get('q') || '').slice(0, 100)));
-    const cm = pathname.match(/^\/c\/([^/]+)\/?$/);
-    if (cm) {
-      let cat = '';
-      try { cat = decodeURIComponent(cm[1]); } catch {}
-      const body = cat && categoryPage(data, o, viewer, cat);
-      return body ? html(200, body) : html(404, notFoundPage(data, o));
+    let segs = [];
+    try { segs = pathname.split('/').filter(Boolean).map(decodeURIComponent); } catch { return html(404, notFoundPage(data, o)); }
+
+    /* メディアが2つ以上なら、1つめの区切りはメディアのURL */
+    let media = data.media[0];
+    if (multi(data)) {
+      if (!segs.length) return html(200, portalPage(data, o, viewer));
+      if (segs[0] === 'search' && segs.length === 1) return html(200, searchPage(data, o, viewer, q));
+      const m = data.media.find(x => x.slug === segs[0]);
+      if (!m) {
+        /* メディアの下に移る前のURL（/記事のURL）は、新しい場所へ案内する */
+        const old = segs.length === 1 && visiblePosts(data, viewer).find(x => x.slug === segs[0]);
+        if (old) return redirect(postHref(data, old));
+        return page(res, 404, notFoundPage(data, o), 'text/html; charset=utf-8', !personal);
+      }
+      media = m;
+      segs = segs.slice(1);
+      if (!segs.length && !pathname.endsWith('/')) return redirect(`/${m.slug}/`);
+    } else if (segs[0] === media.slug && segs.length <= 2) {
+      return redirect('/' + segs.slice(1).join('/'));
     }
-    let slug = '';
-    try { slug = decodeURIComponent(pathname.replace(/^\/+|\/+$/g, '')); } catch {}
-    const p = SLUG.test(slug) && visiblePosts(data, viewer).find(x => x.slug === slug);
+    if (mediaIsPrivate(data, media) && !viewer) return page(res, 401, gatePage(data, o, pathname, media), 'text/html; charset=utf-8', false);
+
+    if (!segs.length) return html(200, homePage(data, o, viewer, media));
+    if (segs.length === 1 && segs[0] === 'search') return html(200, searchPage(data, o, viewer, q, media));
+    if (segs.length === 1 && segs[0] === 'feed.xml') return page(res, 200, feed(data, o, media), 'application/rss+xml; charset=utf-8');
+    if (segs.length === 2 && segs[0] === 'c') {
+      const body = categoryPage(data, o, viewer, media, segs[1]);
+      return body ? html(200, body) : page(res, 404, notFoundPage(data, o, media), 'text/html; charset=utf-8', !personal);
+    }
+    const p = segs.length === 1 && SLUG.test(segs[0]) && visiblePosts(data, viewer).find(x => x.slug === segs[0]);
+    if (p && mediaOf(data, p).id !== media.id) return redirect(postHref(data, p));
     if (p) return html(200, postPage(data, p, o, viewer));
-    return page(res, 404, notFoundPage(data, o), 'text/html; charset=utf-8', !personal);
+    return page(res, 404, notFoundPage(data, o, media), 'text/html; charset=utf-8', !personal);
   } catch (e) {
     console.error(e);
     if (res.headersSent) return;

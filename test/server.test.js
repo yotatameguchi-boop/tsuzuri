@@ -193,7 +193,7 @@ test('整理：カテゴリ・親の記事・並び順。棚・パンくず・�
   const parent = await call('GET', '/manual');
   assert.match(parent.text, /この中の記事[\s\S]*ログインのしかた[\s\S]*記事の書き方/);
   const child = await call('GET', '/manual-login');
-  assert.match(child.text, /class="crumbs"><a href="\/">ホーム<\/a>.*マニュアル.*使い方マニュアル/);
+  assert.match(child.text, /class="crumbs"><a href="\/">インターン日誌<\/a>.*マニュアル.*使い方マニュアル/);
   assert.match(child.text, /class="next" href="\/manual-write"/);
   assert.equal((await call('GET', '/c/' + encodeURIComponent('ない棚'))).status, 404);
 });
@@ -233,7 +233,7 @@ test('読む人を限定：メンバー限定の記事と、サイト全体を�
   assert.equal((await call('PUT', '/api/site', { cookie: S.admin, body: { ...site, visibility: 'members' } })).status, 200);
   const gate = await call('GET', '/minutes-in-10-minutes');
   assert.equal(gate.status, 401);
-  assert.match(gate.text, /このサイトはメンバーだけが読めます/);
+  assert.match(gate.text, /メンバーだけが読めます/);
   assert.equal((await call('GET', '/minutes-in-10-minutes', { cookie: reader })).status, 200);
   assert.match((await call('GET', '/robots.txt')).text, /Disallow: \/\n/);
   assert.equal((await call('PUT', '/api/site', { cookie: S.admin, body: { ...site, visibility: 'public' } })).status, 200);
@@ -264,4 +264,52 @@ test('書き出し：管理者は全記事をJSONで持ち出せる。添付フ�
   assert.equal((await call('GET', '/api/export', { cookie: w })).status, 403);
   assert.equal((await call('POST', '/api/upload-url', { cookie: S.admin, body: { type: 'application/pdf', size: 1000 } })).status, 200);
   assert.equal((await call('POST', '/api/upload-url', { cookie: S.admin, body: { type: 'text/html', size: 10 } })).status, 415);
+});
+
+test('複数のメディア：名前・色・URLのちがうメディアを1つの Tsuzuri から出せる', async () => {
+  assert.equal((await call('PUT', '/api/media/m2', { cookie: S.writer2 || S.admin, body: { name: 'あしかもメディア', slug: 'write', mark: 'あ' } })).status, 400, 'サイトの仕組みで使う名前はURLにできない');
+  const w = (await call('POST', '/api/login', { body: { loginId: 'sato', password: 'sato-reset-789' } })).cookie;
+  assert.equal((await call('PUT', '/api/media/m2', { cookie: w, body: { name: 'あしかもメディア', slug: 'ashikamo' } })).status, 403, '書き手はメディアを作れない');
+
+  const content = (await call('GET', '/api/content', { cookie: S.admin })).json;
+  const first = content.media[0];
+  assert.equal(first.slug, 'main');
+  assert.equal((await call('PUT', `/api/media/${first.id}`, { cookie: S.admin, body: { ...first, slug: 'nisshi' } })).status, 200);
+  assert.equal((await call('PUT', '/api/media/m2', { cookie: S.admin, body: { name: 'あしかもメディア', slug: 'ashikamo', mark: 'あし', color: 'green', tagline: '足利と鴨川の話' } })).status, 200);
+  assert.equal((await call('PUT', '/api/media/m3', { cookie: S.admin, body: { name: 'じもころ', slug: 'jimocoro', color: 'orange' } })).status, 200);
+  assert.equal((await call('PUT', '/api/media/m4', { cookie: S.admin, body: { name: '重複', slug: 'ashikamo' } })).status, 400, 'URLの重複は断る');
+  assert.equal((await call('PUT', '/api/media/m4', { cookie: S.admin, body: { name: '記事と重複', slug: 'manual' } })).status, 400, '記事のURLとも重ならない');
+
+  const put = await call('PUT', '/api/posts/a1', { cookie: S.admin, body: { post: { slug: 'ashikaga-cafe', title: '足利のカフェ巡り', body: '[[使い方マニュアル]] も読んでね', draft: false, media: 'm2' } } });
+  assert.equal(put.status, 200);
+  assert.equal(put.json.post.media, 'm2');
+
+  const portal = await call('GET', '/');
+  assert.match(portal.text, /class="media-card"[\s\S]*あしかもメディア[\s\S]*じもころ/);
+  assert.match(portal.text, /href="\/ashikamo\/"/);
+  const home = await call('GET', '/ashikamo/');
+  assert.equal(home.status, 200);
+  assert.match(home.text, /<title>あしかもメディア<\/title>/);
+  assert.match(home.text, /<span class="k two">あし<\/span><span class="w">あしかもメディア<\/span>/, 'ロゴと名前がメディアごとに変わる');
+  assert.match(home.text, /--blue:#12804e/, '色もメディアごと');
+  assert.doesNotMatch(home.text, /議事録/, 'ほかのメディアの記事は出ない');
+  assert.equal((await call('GET', '/ashikamo')).status, 301);
+
+  const post = await call('GET', '/ashikamo/ashikaga-cafe');
+  assert.equal(post.status, 200);
+  assert.match(post.text, /href="\/nisshi\/manual"/, 'ほかのメディアの記事へのリンクも正しいURLになる');
+  const old = await call('GET', '/minutes-in-10-minutes');
+  assert.equal(old.status, 301, '前のURLは新しい場所へ案内する');
+  assert.equal(old.headers.Location, '/nisshi/minutes-in-10-minutes');
+  assert.equal((await call('GET', '/jimocoro/minutes-in-10-minutes')).status, 301, '別のメディアの下で開いても正しい場所へ');
+  assert.match((await call('GET', '/ashikamo/feed.xml')).text, /<title>あしかもメディア<\/title>[\s\S]*足利のカフェ巡り/);
+  assert.doesNotMatch((await call('GET', '/ashikamo/search?q=' + encodeURIComponent('議事録'))).text, /class="result"/, 'メディアの中の検索はそのメディアだけ');
+  assert.match((await call('GET', '/search?q=' + encodeURIComponent('カフェ'))).text, /あしかもメディア/, '全体の検索はメディア名つき');
+  assert.match((await call('GET', '/sitemap.xml')).text, /\/ashikamo\/ashikaga-cafe/);
+
+  await call('PUT', '/api/media/m3', { cookie: S.admin, body: { name: 'じもころ', slug: 'jimocoro', color: 'orange', visibility: 'members' } });
+  assert.equal((await call('GET', '/jimocoro/')).status, 401, 'メンバーだけのメディア');
+  assert.doesNotMatch((await call('GET', '/')).text, /じもころ/);
+  assert.equal((await call('DELETE', '/api/media/m2', { cookie: S.admin })).status, 400, '記事があるメディアは消せない');
+  assert.equal((await call('DELETE', '/api/media/m3', { cookie: S.admin })).status, 200);
 });
