@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450" font-family="Hiragino Sans, Noto Sans JP, sans-serif">
+<rect width="800" height="450" fill="#f7f7f5"/>
+<rect x="60" y="40" width="680" height="370" fill="#ffffff" stroke="#d9d9d4"/>
+<g fill="#4a4a46" font-size="18">
+<text x="90" y="90">10/3 定例</text>
+<text x="90" y="130">佐藤さん：先月の数字は悪くない、でも広告費が…</text>
+<text x="110" y="165">→ 来月どうするかは要相談？</text>
+<text x="90" y="205">鈴木さん：LPの件、デザイン待ち（いつ？）</text>
+<text x="90" y="245">SNSの投稿頻度の話 盛り上がった</text>
+<text x="90" y="285">山田さん：それは次回でいいかも</text>
+<text x="90" y="325">資料共有する → 誰が？</text>
+<text x="90" y="365">あと何か決まった気がする…</text>
+</g>
+<path d="M520 190 q40 -30 80 0 t80 0" stroke="#c9c9c2" stroke-width="3" fill="none"/>
+<path d="M500 300 l160 40" stroke="#c9c9c2" stroke-width="3"/>
+</svg>

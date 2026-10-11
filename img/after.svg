@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450" font-family="Hiragino Sans, Noto Sans JP, sans-serif">
+<rect width="800" height="450" fill="#eef2fb"/>
+<rect x="60" y="40" width="680" height="370" fill="#ffffff" stroke="#c7d6fb"/>
+<text x="90" y="88" font-size="22" font-weight="700" fill="#0b0d12">10/3 定例　議事録</text>
+<g font-size="15" font-weight="700" fill="#1f56e0">
+<text x="90" y="135">目的</text><text x="90" y="185">決定事項</text><text x="90" y="290">担当と期限</text><text x="90" y="375">保留</text>
+</g>
+<g font-size="17" fill="#2b2f38">
+<text x="210" y="135">10月の広告予算を決める</text>
+<text x="210" y="185">・広告費を10月は20%減らす</text>
+<text x="210" y="220">・LPは10/10公開に変更</text>
+<text x="210" y="290">・予算表の更新：佐藤（10/6）</text>
+<text x="210" y="325">・LPデザイン確定：鈴木（10/8）</text>
+<text x="210" y="375">SNSの投稿頻度 → 次回の定例で</text>
+</g>
+<line x1="90" y1="155" x2="710" y2="155" stroke="#e3e8f4"/><line x1="90" y1="255" x2="710" y2="255" stroke="#e3e8f4"/><line x1="90" y1="345" x2="710" y2="345" stroke="#e3e8f4"/>
+</svg>
