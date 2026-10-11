@@ -10,6 +10,6 @@
     { "source": "/(.*)", "destination": "/api/index?__p=/$1" }
   ],
   "headers": [
-    { "source": "/assets/(.*)", "headers": [{ "key": "Cache-Control", "value": "public, max-age=300, stale-while-revalidate=86400" }] }
+    { "source": "/(assets/.*|write)", "headers": [{ "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }] }
   ]
 }
