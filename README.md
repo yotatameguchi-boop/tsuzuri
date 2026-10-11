@@ -24,7 +24,7 @@ A writing tool for interactive articles (quizzes, calculators, graphs, tabs, ste
 
 ```
 npm install
-npm run dev   # http://localhost:3070  password: tsuzuri
+npm run dev   # http://localhost:3071  password: tsuzuri
 npm test
 ```
 

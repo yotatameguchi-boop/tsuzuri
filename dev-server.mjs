@@ -1,10 +1,10 @@
-/* 手元で動かす: npm run dev → http://localhost:3070 （合言葉は tsuzuri、データは data/ に保存） */
+/* 手元で動かす: npm run dev → http://localhost:3071 （合言葉は tsuzuri、データは data/ に保存） */
 import http from 'node:http';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import handler from './api/index.js';
 
-const PORT = +process.env.PORT || 3070;
+const PORT = +process.env.PORT || 3071;
 const PUB = path.join(path.dirname(new URL(import.meta.url).pathname), 'public');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg' };
 

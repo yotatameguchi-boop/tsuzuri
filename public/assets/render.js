@@ -353,4 +353,21 @@ function evaluate(expr, vars) {
   return v;
 }
 
-export { esc, safeUrl, inline, parse, renderBody, liveKinds, evaluate, LIVE_LABEL };
+/* 一覧や検索結果に出す抜粋。部品（::: 〜 :::）やコードの中身は使わず、地の文だけを拾う */
+function excerpt(body, n = 120) {
+  const out = [];
+  let depth = 0, fence = false;
+  for (const raw of String(body || '').split('\n')) {
+    const l = raw.trim();
+    if (/^```/.test(l)) { fence = !fence; continue; }
+    if (fence) continue;
+    if (/^:::\s*\S/.test(l)) { depth++; continue; }
+    if (/^:::\s*$/.test(l)) { depth = Math.max(0, depth - 1); continue; }
+    if (depth || !l || /^(#|!\[|\||>|[-*+]\s|\d+[.)]\s|@|\[\[|https?:)/.test(l)) continue;
+    out.push(l);
+  }
+  return out.join(' ').replace(/\{([^{}|]+)\|[^{}]+\}/g, '$1').replace(/\[\[([^\]]+)\]\]/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/[*=~`]/g, '').slice(0, n);
+}
+
+export { excerpt, esc, safeUrl, inline, parse, renderBody, liveKinds, evaluate, LIVE_LABEL };

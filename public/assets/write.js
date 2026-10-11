@@ -1,5 +1,5 @@
 /* 書く人の画面（/write）。ログイン → 記事一覧 → 編集 の3つだけ。 */
-import { esc, renderBody, liveKinds } from './render.js';
+import { esc, renderBody, liveKinds, excerpt } from './render.js';
 import { hydrate, hideTip } from './live.js';
 
 const $ = id => document.getElementById(id);
@@ -66,7 +66,7 @@ function renderList() {
       const kinds = liveKinds(p.body);
       const chips = [...(p.draft ? ['<span class="chip draft">下書き（読者には見えません）</span>'] : []), ...kinds.map(k => `<span class="chip">${k}</span>`)];
       return `<div class="pr w"><a class="post-row" href="/write#${esc(p.slug)}" data-edit="${esc(p.slug)}"><time>${fmtDate(p.date)}</time><div><h2 class="t">${esc(p.title || '無題')}</h2></div>` +
-        `<p class="x">${esc(p.body.replace(/[#*=~`>|:\[\]{}@-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 90))}</p>${chips.length ? `<div class="chips">${chips.join('')}</div>` : ''}</a>` +
+        `<p class="x">${esc(excerpt(p.body))}</p>${chips.length ? `<div class="chips">${chips.join('')}</div>` : ''}</a>` +
         `<button class="btn row-edit" type="button" data-edit="${esc(p.slug)}">編集</button></div>`;
     }).join('') : `<div class="empty-note"><p>まだ記事がありません</p><button class="btn primary" type="button" id="first-post">最初の記事を書く</button></div>`}</section>`;
   root.querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', e => { e.preventDefault(); openEditor(b.dataset.edit); }));
