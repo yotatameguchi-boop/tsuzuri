@@ -4,17 +4,17 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=M+PLUS+1+Code:wght@400;500&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Zen+Old+Mincho:wght@600;700&display=swap">
 <style>
 :root{
-  --bg:#f1f4f1;
+  --bg:#f4f6f9;
   --surface:#ffffff;
-  --ink:#1d2621;
-  --muted:#5d6b63;
-  --line:#d6ded8;
-  --accent:#2f6f4f;
+  --ink:#0b0d12;
+  --muted:#5a6270;
+  --line:#dde2ea;
+  --accent:#1f56e0;
   --accent-ink:#ffffff;
-  --accent-soft:#e2eee7;
-  --rule:rgba(47,111,79,.09);
-  --focus:#2f6f4f;
-  --ok:#2f6f4f;
+  --accent-soft:#e9effd;
+  --rule:rgba(31,86,224,.08);
+  --focus:#1f56e0;
+  --ok:#1f56e0;
   --sans:"Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP",system-ui,sans-serif;
   --mono:"M PLUS 1 Code","SFMono-Regular",Menlo,Consolas,monospace;
   --serif:"Zen Old Mincho","Hiragino Mincho ProN","Yu Mincho",serif;
@@ -22,14 +22,14 @@
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
     color-scheme:dark;
-    --bg:#121714;--surface:#19201c;--ink:#e2e9e4;--muted:#93a39a;--line:#2b3530;
-    --accent:#7cc39d;--accent-ink:#0e1a13;--accent-soft:#1e3128;--rule:rgba(124,195,157,.07);--focus:#7cc39d;--ok:#7cc39d;
+    --bg:#0a0b0e;--surface:#13151a;--ink:#f2f4f8;--muted:#9aa3b2;--line:#262a33;
+    --accent:#5b8cff;--accent-ink:#0a0b0e;--accent-soft:#16213d;--rule:rgba(91,140,255,.07);--focus:#5b8cff;--ok:#5b8cff;
   }
 }
 :root[data-theme="dark"]{
   color-scheme:dark;
-  --bg:#121714;--surface:#19201c;--ink:#e2e9e4;--muted:#93a39a;--line:#2b3530;
-  --accent:#7cc39d;--accent-ink:#0e1a13;--accent-soft:#1e3128;--rule:rgba(124,195,157,.07);--focus:#7cc39d;--ok:#7cc39d;
+  --bg:#0a0b0e;--surface:#13151a;--ink:#f2f4f8;--muted:#9aa3b2;--line:#262a33;
+    --accent:#5b8cff;--accent-ink:#0a0b0e;--accent-soft:#16213d;--rule:rgba(91,140,255,.07);--focus:#5b8cff;--ok:#5b8cff;
 }
 html,body{height:100%}
 body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.6}
@@ -81,10 +81,10 @@ main.panes{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 
 .view[hidden]{display:none!important}
 
 /* プレビューは公開後のブログ紙面を模すので常に明るい紙で表示する */
-.paper{background:#ffffff;color:#24292e;margin:16px;border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,.12);padding:32px clamp(18px,4vw,44px) 48px;font-family:var(--sans);font-size:15.5px;line-height:1.9}
+.paper{background:#ffffff;color:#14161b;margin:16px;border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,.12);padding:32px clamp(18px,4vw,44px) 48px;font-family:var(--sans);font-size:15.5px;line-height:1.9}
 .paper .post-title{font-size:24px;line-height:1.5;margin:0 0 24px;padding-bottom:14px;border-bottom:1px solid #e3e6e8;text-wrap:balance}
-.paper h2{font-size:20px;line-height:1.5;margin:2em 0 .8em;padding:.5em .8em;background:#f2f5f3;border-left:5px solid #2f6f4f;text-wrap:balance}
-.paper h3{font-size:17.5px;margin:1.8em 0 .6em;padding-bottom:.3em;border-bottom:2px solid #dfe7e2;text-wrap:balance}
+.paper h2{font-size:20px;line-height:1.5;margin:2em 0 .8em;padding:.5em .8em;background:#f1f4fb;border-left:5px solid #1f56e0;text-wrap:balance}
+.paper h3{font-size:17.5px;margin:1.8em 0 .6em;padding-bottom:.3em;border-bottom:2px solid #dbe3f5;text-wrap:balance}
 .paper h4{font-size:16px;margin:1.5em 0 .5em}
 .paper p{margin:0 0 1.2em}
 .paper a{color:#1d63b8}
@@ -103,12 +103,12 @@ main.panes{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 
 .paper .wp-block-table{overflow-x:auto}
 .paper table{border-collapse:collapse;width:100%;font-size:14px}
 .paper th,.paper td{border:1px solid #d6dbde;padding:.5em .8em;text-align:left;vertical-align:top}
-.paper th{background:#f2f5f3}
+.paper th{background:#f1f4fb}
 .paper hr{border:0;border-top:1px solid #d6dbde;margin:2em auto;width:100%}
 .paper .wp-block-group{margin:0 0 1.4em}
 .paper .wp-block-group p:last-child{margin-bottom:0}
 .paper .wp-block-buttons{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin:0 0 1.4em}
-.paper .wp-block-button__link{display:inline-block;background:#2f6f4f;color:#fff;text-decoration:none;padding:.7em 1.8em;border-radius:999px;font-weight:700}
+.paper .wp-block-button__link{display:inline-block;background:#1f56e0;color:#fff;text-decoration:none;padding:.7em 1.8em;border-radius:999px;font-weight:700}
 
 .codeview{padding:16px;display:flex;flex-direction:column;gap:12px;min-height:100%}
 .steps{margin:0;padding:12px 14px 12px 34px;background:var(--accent-soft);border-radius:8px;font-size:13px;line-height:1.8}
