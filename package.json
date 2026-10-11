@@ -1,0 +1,13 @@
+{
+  "name": "tsuzuri",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "dev": "node dev-server.mjs",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@vercel/blob": "^2.0.0"
+  }
+}
