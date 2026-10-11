@@ -1,6 +1,7 @@
 /* 書く人の画面（/write）。ログイン → 記事一覧 → 編集。管理者はメンバーも管理できる。 */
 import { esc, renderBody, liveKinds, excerpt, frontMatter, resolveMeta } from './render.js';
 import { hydrate, hideTip } from './live.js';
+import { THEMES, COLORS, OPTIONS, DESIGN_KEYS, cleanDesign, designCss, fontFamilies, palette, accentOf } from './design.js';
 
 const $ = id => document.getElementById(id);
 const root = $('root');
@@ -102,20 +103,12 @@ function renderNav() {
 }
 
 /* ---- メディアとURL（読者のページと同じ決まり） ---- */
-const COLOR_NAMES = { blue: '青', red: '赤', green: '緑', orange: '橙', purple: '紫', teal: '青緑', ink: '黒' };
-const THEME_NAMES = {
-  standard: ['標準', '明朝の見出しと黒い線。落ち着いた読みもの向け'],
-  pop: ['ポップ', '丸ゴシック・丸い角・色つきの見出し。親しみやすいメディア向け'],
-  magazine: ['マガジン', '大きな明朝のタイトル・二重線・最初の文字を大きく'],
-  natural: ['ナチュラル', 'やわらかい手書き風の書体・生成りの背景・点線'],
-  simple: ['シンプル', '線を減らしたゴシック。マニュアルやお知らせ向け'],
-  tech: ['テック', '等幅の書体と「#」つきの見出し。技術ブログ向け'],
-};
-const COLOR_HEX = { blue: '#1f56e0', red: '#c8332f', green: '#12804e', orange: '#b9520c', purple: '#6847b8', teal: '#0d7680', ink: '#0b0d12' };
+const COLOR_NAMES = Object.fromEntries(Object.entries(COLORS).map(([k, v]) => [k, v.name]));
+const THEME_NAMES = Object.fromEntries(Object.entries(THEMES).map(([k, v]) => [k, [v.name, v.note]]));
 const multiMedia = () => S.data.media.length > 1;
 const mediaById = id => S.data.media.find(m => m.id === id) || S.data.media[0];
 const readerHref = p => `${multiMedia() ? '/' + mediaById(p.media).slug : ''}/${p.slug}`;
-const markHtml = m => `<span class="k${[...(m.mark || '綴')].length > 1 ? ' two' : ''}" style="background:${COLOR_HEX[m.color] || COLOR_HEX.blue}">${esc(m.mark || '綴')}</span>`;
+const markHtml = m => `<span class="k${[...(m.mark || '綴')].length > 1 ? ' two' : ''}" style="background:${palette(accentOf(m)).light.a}">${esc(m.mark || '綴')}</span>`;
 
 /* ---- 記事の一覧 ---- */
 function renderList() {
@@ -152,34 +145,99 @@ function renderList() {
 /* ---- メディアの設定（管理者） ---- */
 function mediaForm(m, isNew) {
   const id = isNew ? 'new' : m.id;
+  const d = m.design || {};
+  const custom = !!d.accent;
+  const opt = (name, cur) => `<label class="field">${OPTIONS[name].label}<select name="d_${name}">${Object.entries(OPTIONS[name].choices).map(([k, v]) => `<option value="${k}"${(cur || '') === k ? ' selected' : ''}>${v}</option>`).join('')}</select></label>`;
+  const img = (name, label, note) => `<div class="field img-field"><span>${label}</span><input type="hidden" name="d_${name}" value="${esc(d[name] || '')}">
+    <div class="img-row"><span class="img-prev">${d[name] ? `<img src="${esc(d[name])}" alt="">` : 'なし'}</span><button class="btn" type="button" data-upload="${name}">画像を選ぶ</button><button class="btn ghost" type="button" data-clear="${name}"${d[name] ? '' : ' hidden'}>外す</button></div><span class="sub">${note}</span></div>`;
   return `<form class="media-form" data-id="${esc(id)}">
     <div class="mf-head">${isNew ? '<strong>新しいメディア</strong>' : `${markHtml(m)}<strong>${esc(m.name)}</strong><span class="sub">${multiMedia() ? `/${esc(m.slug)}/` : 'サイトの直下（メディアが1つのとき）'}</span>`}</div>
     <div class="set-grid">
-      <label class="field">名前<input name="name" value="${esc(m.name || '')}" required maxlength="40" placeholder="例：あしかもメディア"></label>
+      <label class="field">名前<input name="name" value="${esc(m.name || '')}" required maxlength="40" placeholder="例：まちのたより"></label>
       <label class="field" style="flex:0 0 120px;min-width:0">ロゴの文字（1〜2字）<input name="mark" value="${esc(m.mark || '')}" maxlength="2" placeholder="例：あ"></label>
-      <label class="field">URL（半角英小文字・数字・ハイフン）<input name="slug" value="${esc(m.slug || '')}" required pattern="[a-z0-9][a-z0-9\\-]{1,29}" placeholder="例：ashikamo" autocapitalize="none"></label>
+      <label class="field">URL（半角英小文字・数字・ハイフン）<input name="slug" value="${esc(m.slug || '')}" required pattern="[a-z0-9][a-z0-9\\-]{1,29}" placeholder="例：machi" autocapitalize="none"></label>
     </div>
     <div class="set-grid">
-      <label class="field">説明（1行）<input name="tagline" value="${esc(m.tagline || '')}" maxlength="200" placeholder="例：足利と鴨川の、地元の話"></label>
-      <label class="field" style="flex:0 0 140px;min-width:0">色<select name="color">${Object.entries(COLOR_NAMES).map(([k, v]) => `<option value="${k}"${(m.color || 'blue') === k ? ' selected' : ''}>${v}</option>`).join('')}</select></label>
+      <label class="field">説明（1行）<input name="tagline" value="${esc(m.tagline || '')}" maxlength="200" placeholder="例：地元の話を地元の人が書く"></label>
       <label class="field">読める人<select name="visibility"><option value="public"${m.visibility !== 'members' ? ' selected' : ''}>誰でも</option><option value="members"${m.visibility === 'members' ? ' selected' : ''}>ログインしたメンバーだけ</option></select></label>
     </div>
-    <fieldset class="theme-pick"><legend>デザイン</legend>${Object.entries(THEME_NAMES).map(([k, [n, d]]) =>
-      `<label class="theme-opt"><input type="radio" name="theme" value="${k}"${(m.theme || 'standard') === k ? ' checked' : ''}><span class="tp-sample tp-${k}">あア</span><span><strong>${n}</strong><span class="sub">${d}</span></span></label>`).join('')}</fieldset>
-    <details class="css-more"${m.css ? ' open' : ''}><summary>追加のCSS（上級者向け）</summary>
-      <p class="sub">このメディアのページにだけ効く CSS を書けます。例：<code>.prose h2{color:var(--blue)}</code>　色は <code>var(--blue)</code>、背景は <code>var(--bg)</code> で指定すると、暗い画面でも読みやすくなります。</p>
-      <textarea name="css" rows="6" spellcheck="false" placeholder="/* 例 */&#10;.home-head h1 { letter-spacing: .1em; }">${esc(m.css || '')}</textarea></details>
+    <div class="design-area">
+      <div class="design-controls">
+        <fieldset class="theme-pick"><legend>デザインのひな形（ここから細かく変えられます）</legend>${Object.entries(THEMES).map(([k, t]) =>
+          `<label class="theme-opt"><input type="radio" name="theme" value="${k}"${(m.theme || 'standard') === k ? ' checked' : ''}><span class="tp-sample tp-${k}">あア</span><span><strong>${t.name}</strong><span class="sub">${t.note}</span></span></label>`).join('')}</fieldset>
+        <div class="set-grid">
+          <label class="field">色<select name="color">${Object.entries(COLORS).map(([k, c]) => `<option value="${k}"${!custom && (m.color || 'blue') === k ? ' selected' : ''}>${c.name}</option>`).join('')}<option value="custom"${custom ? ' selected' : ''}>好きな色を選ぶ…</option></select></label>
+          <label class="field accent-field"${custom ? '' : ' hidden'}>好きな色<input type="color" name="accent" value="${esc(d.accent || accentOf(m))}"></label>
+        </div>
+        <details class="fine"${Object.keys(d).length ? ' open' : ''}><summary>デザインを細かく変える</summary>
+          <h3 class="fine-h">文字</h3><div class="set-grid">${opt('headingFont', d.headingFont)}${opt('bodyFont', d.bodyFont)}${opt('fontSize', d.fontSize)}</div>
+          <h3 class="fine-h">見出しと形</h3><div class="set-grid">${opt('h2', d.h2)}${opt('h3', d.h3)}${opt('radius', d.radius)}</div>
+          <h3 class="fine-h">ページの作り</h3><div class="set-grid">${opt('header', d.header)}${opt('list', d.list)}${opt('width', d.width)}</div>
+          <div class="set-grid">${opt('background', d.background)}${opt('links', d.links)}</div>
+          <h3 class="fine-h">画像と文字</h3>
+          ${img('logo', 'ロゴ画像', 'ロゴの文字の代わりに、上のバーに出ます（横長でも大丈夫）')}
+          ${img('cover', '表紙の画像', 'メディアのトップに大きく出ます。横長の写真が向いています')}
+          <label class="field">フッターの一文<input name="d_footer" value="${esc(d.footer || '')}" maxlength="200" placeholder="例：© 2026 まちのたより編集部"></label>
+        </details>
+        <details class="css-more"${m.css ? ' open' : ''}><summary>追加のCSS（上級者向け）</summary>
+          <p class="sub">このメディアのページにだけ効く CSS を書けます。例：<code>.prose h2{color:var(--blue)}</code>　色は <code>var(--blue)</code>、背景は <code>var(--bg)</code> で指定すると、暗い画面でも読みやすくなります。</p>
+          <textarea name="css" rows="6" spellcheck="false" placeholder="/* 例 */&#10;.home-head h1 { letter-spacing: .1em; }">${esc(m.css || '')}</textarea></details>
+      </div>
+      <div class="design-preview"><div class="dp-h">見本（保存前の見た目）</div><iframe title="デザインの見本" loading="lazy"></iframe></div>
+    </div>
     <div class="err" role="alert"></div>
     <div class="row" style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" type="submit">${isNew ? 'メディアを作る' : '保存'}</button>
       ${isNew ? '' : `<a class="btn ghost" href="${multiMedia() ? '/' + esc(m.slug) + '/' : '/'}" target="_blank" rel="noopener">見る ↗</a>${S.data.media.length > 1 ? `<button class="btn ghost" type="button" data-del="${esc(m.id)}">このメディアを削除</button>` : ''}`}</div>
   </form>`;
 }
 
+/* フォームの中身から、保存する形のメディアを作る */
+function mediaFromForm(form) {
+  const f = Object.fromEntries(new FormData(form));
+  const design = {};
+  for (const k of DESIGN_KEYS) if (f['d_' + k]) design[k] = f['d_' + k];
+  if (f.color === 'custom' && f.accent) design.accent = f.accent;
+  return { name: f.name, mark: f.mark, slug: (f.slug || '').toLowerCase(), tagline: f.tagline, visibility: f.visibility, theme: f.theme,
+    color: f.color === 'custom' ? 'blue' : f.color, design: cleanDesign(design), css: f.css || '' };
+}
+
+/* ---- 見本：保存前のデザインを、小さなページで見せる ---- */
+let baseCss = null;
+async function drawPreview(form) {
+  const frame = form.querySelector('.design-preview iframe');
+  if (!frame) return;
+  if (baseCss === null) { try { baseCss = await (await fetch('/assets/style.css')).text(); } catch { baseCss = ''; } }
+  const m = mediaFromForm(form);
+  const d = m.design;
+  const fonts = 'https://fonts.googleapis.com/css2?' + [...new Set(['M+PLUS+1+Code:wght@400;500', 'Shippori+Mincho+B1:wght@600;800', 'Zen+Kaku+Gothic+New:wght@400;500;700', ...fontFamilies(m)])].map(x => 'family=' + x).join('&') + '&display=swap';
+  const name = esc(m.name || 'メディアの名前'), mark = esc(m.mark || [...(m.name || '綴')][0]);
+  const logo = d.logo ? `<span class="k img"><img src="${esc(d.logo)}" alt=""></span>` : `<span class="k${[...mark].length > 1 ? ' two' : ''}">${mark}</span>`;
+  const sample = [
+    { t: '地元のパン屋を5軒めぐった', x: '朝7時に開くお店から順番にまわりました。', img: '' },
+    { t: '川沿いの朝さんぽコース', x: '駅から歩いて10分、静かな道をまとめました。', img: '' },
+  ];
+  const list = d.list === 'cards' || d.list === 'grid'
+    ? `<div class="post-${d.list}">${sample.map(s => `<a class="post-card" href="#">${d.list === 'cards' ? `<span class="thumb none"><span>${mark}</span></span>` : ''}<span class="pc-body"><span class="pc-title">${s.t}</span><span class="pc-x">${s.x}</span><time>2026.10.11</time></span></a>`).join('')}</div>`
+    : sample.map(s => `<div class="pr"><a class="post-row" href="#"><time>2026.10.11</time><div><h2 class="t">${s.t}</h2></div><p class="x">${s.x}</p></a></div>`).join('');
+  const head = d.cover
+    ? `<section class="cover" style="background-image:url('${esc(d.cover)}')"><div class="cover-in"><h1>${name}</h1>${m.tagline ? `<p>${esc(m.tagline)}</p>` : ''}</div></section>`
+    : `<section class="home-head"><h1>${name}</h1>${m.tagline ? `<p>${esc(m.tagline)}</p>` : ''}</section>`;
+  const html = `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="${fonts}"><style>${baseCss}</style><style>${designCss(m)}${m.css ? String(m.css).replace(/</g, '') : ''}
+body{pointer-events:none}main{padding-bottom:20px}.home-head{padding-block:28px 18px}.post-layout{padding-block:20px 30px}.toc{display:none}</style></head><body>
+<header class="bar"><div class="bar-in"><a class="logo" href="#">${logo}<span class="w">${name}</span></a><form class="search-mini"><input type="search" placeholder="検索"></form></div></header>
+<main>${head}<section class="posts">${list}</section>
+<div class="post-layout"><article class="article"><header class="article-head"><p class="crumbs"><a href="#">${name}</a></p><h1>記事のタイトルはこう見えます</h1><div class="meta"><time>2026.10.11</time><span>書いた人</span></div></header>
+<div class="prose"><p>本文はこの書体と大きさで読まれます。<a href="#">リンク</a>はこう見えます。</p><h2>大見出しの形</h2><p>見出しの下の文章です。</p><h3>小見出しの形</h3><div class="box point"><p class="bx-t">ポイント</p><p>枠の角の丸さも変わります。</p></div><div class="btns"><a class="cta" href="#">ボタン</a></div></div></article></div></main>
+<footer class="site-foot"><div class="wrap"><span>${d.footer ? esc(d.footer) : '© 2026 ' + name}</span></div></footer></body></html>`;
+  frame.srcdoc = html;
+}
+
 function renderMedia() {
   document.title = 'メディアの設定 | ' + (S.data.site.name || 'Tsuzuri');
   const site = S.data.site;
-  const blank = { name: '', slug: '', mark: '', tagline: '', color: Object.keys(COLOR_NAMES)[S.data.media.length % 7], theme: 'standard', css: '', visibility: 'public' };
-  root.innerHTML = `<section class="manage"><h1>メディアの設定</h1>
+  const blank = { name: '', slug: '', mark: '', tagline: '', color: Object.keys(COLORS)[S.data.media.length % 7], theme: 'standard', design: {}, css: '', visibility: 'public' };
+  root.innerHTML = `<section class="manage wide"><h1>メディアの設定</h1>
     <p class="sub">1つの Tsuzuri から、名前のちがう複数のメディアを出せます。メディアが2つ以上になると、それぞれ <code>/URL/</code> の下に置かれ、サイトのいちばん上は全メディアの入口になります（前のURLは自動で新しい場所へ案内します）。</p>
     ${S.data.media.map(m => mediaForm(m, false)).join('')}
     <h2 class="sec">メディアを増やす</h2>${mediaForm(blank, true)}
@@ -189,15 +247,40 @@ function renderMedia() {
       <label class="field">説明（1行）<input name="tagline" value="${esc(site.tagline || '')}" maxlength="200"></label>
       <div class="err" role="alert"></div><button class="btn primary" type="submit">保存</button></form>
   </section>`;
-  root.querySelectorAll('.media-form').forEach(form => bindForm(form, async f => {
-    const isNew = form.dataset.id === 'new';
-    const id = isNew ? 'm' + Date.now().toString(36) : form.dataset.id;
-    const r = await post(`/api/media/${id}`, { ...f, slug: f.slug.toLowerCase() }, 'PUT');
-    if (!r.ok) return r.body.message || '保存できませんでした';
-    await reloadContent();
-    toast(isNew ? `「${f.name}」を作りました` : '保存しました');
-    renderMedia();
-  }));
+  root.querySelectorAll('.media-form').forEach(form => {
+    let t;
+    const redraw = () => { clearTimeout(t); t = setTimeout(() => drawPreview(form), 120); };
+    form.addEventListener('input', redraw);
+    form.addEventListener('change', e => {
+      if (e.target.name === 'color') form.querySelector('.accent-field').hidden = e.target.value !== 'custom';
+      redraw();
+    });
+    /* 表示されたときに見本を描く（たくさんのメディアがあっても重くならないように） */
+    new IntersectionObserver((es, ob) => { if (es.some(x => x.isIntersecting)) { drawPreview(form); ob.disconnect(); } }).observe(form.querySelector('.design-preview'));
+    form.querySelectorAll('[data-upload]').forEach(b => b.addEventListener('click', () => pickImage(async file => {
+      const url = await uploadFile(file, b.dataset.upload === 'logo' ? 600 : 2400);
+      if (!url) return;
+      form.querySelector(`[name="d_${b.dataset.upload}"]`).value = url;
+      b.parentElement.querySelector('.img-prev').innerHTML = `<img src="${esc(url)}" alt="">`;
+      b.parentElement.querySelector('[data-clear]').hidden = false;
+      redraw();
+    })));
+    form.querySelectorAll('[data-clear]').forEach(b => b.addEventListener('click', () => {
+      form.querySelector(`[name="d_${b.dataset.clear}"]`).value = '';
+      b.parentElement.querySelector('.img-prev').textContent = 'なし';
+      b.hidden = true; redraw();
+    }));
+    bindForm(form, async () => {
+      const isNew = form.dataset.id === 'new';
+      const id = isNew ? 'm' + Date.now().toString(36) : form.dataset.id;
+      const body = mediaFromForm(form);
+      const r = await post(`/api/media/${id}`, body, 'PUT');
+      if (!r.ok) return r.body.message || '保存できませんでした';
+      await reloadContent();
+      toast(isNew ? `「${body.name}」を作りました` : '保存しました。読者のページにもすぐ反映されます');
+      renderMedia();
+    });
+  });
   root.querySelectorAll('[data-del]').forEach(b => b.addEventListener('click', async () => {
     if (!b.classList.contains('armed')) { b.classList.add('armed'); b.textContent = 'もう一度押すと削除します'; setTimeout(() => { b.classList.remove('armed'); b.textContent = 'このメディアを削除'; }, 3000); return; }
     const r = await api(`/api/media/${b.dataset.del}`, { method: 'DELETE', body: '{}' });
@@ -211,6 +294,44 @@ function renderMedia() {
     toast('保存しました');
   });
 }
+
+/* 画像を1枚選んでアップロードし、URLを返す（ロゴ・表紙用） */
+function pickImage(cb) {
+  const inp = Object.assign(document.createElement('input'), { type: 'file', accept: 'image/png,image/jpeg,image/webp,image/gif' });
+  inp.addEventListener('change', () => { if (inp.files[0]) cb(inp.files[0]); });
+  inp.click();
+}
+async function uploadFile(file, maxSide) {
+  let blob = file, type = file.type;
+  if (/^image\/(png|jpeg|webp)$/.test(type)) {
+    try {
+      const bmp = await createImageBitmap(file);
+      const scale = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale);
+      c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+      const keepPng = type === 'image/png';
+      blob = await new Promise(r => c.toBlob(r, keepPng ? 'image/png' : 'image/jpeg', 0.88));
+      type = blob.type;
+    } catch {}
+  }
+  toast('アップロード中…', 0);
+  const r = await post('/api/upload-url', { type, size: blob.size });
+  if (!r.ok) { toast(r.body.message || 'アップロードできませんでした'); return null; }
+  try {
+    if (r.body.direct) {
+      const up = await fetch(r.body.direct, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': type }, body: blob });
+      const j = await up.json();
+      if (!up.ok) throw new Error(j.message);
+      toast('入れました');
+      return j.url;
+    }
+    await putWithProgress(r.body.putUrl, blob, type, pct => toast(`アップロード中… ${pct}%`, 0));
+    toast('入れました');
+    return r.body.url;
+  } catch { toast('アップロードできませんでした。もう一度試してください'); return null; }
+}
+
 async function reloadContent() {
   const r = await api('/api/content');
   if (r.ok) S.data = { ...r.body, posts: [...r.body.posts, ...S.data.posts.filter(p => !p.rev)] };

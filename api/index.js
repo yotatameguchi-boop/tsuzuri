@@ -1,5 +1,6 @@
 /* Tsuzuri のサーバー。Vercel ではすべてのURLがここに来て（静的ファイルを除く）、中で振り分ける。 */
 import { frontMatter, resolveMeta } from '../public/assets/render.js';
+import { cleanDesign } from '../public/assets/design.js';
 import { getDoc, mutate, allowedType, presignMedia, putLocalMedia, readLocalMedia, useBlob, MEDIA_MAX } from '../lib/store.js';
 import {
   currentUser, issueCookie, clearCookie, hashPassword, verifyPassword, checkNewAccount, checkPassword,
@@ -275,7 +276,7 @@ export default async function handler(req, res) {
           if (doc.posts.some(p => p.slug === slug)) return fail(400, 'invalid', 'そのURLは記事で使われています');
           const css = String(b.css || '');
           if (css.length > 20000) return fail(400, 'invalid', '追加のCSSは2万文字までです');
-          const next = { id, slug, name, tagline, mark, color: COLORS[b.color] ? b.color : 'blue', theme: THEMES[b.theme] ? b.theme : 'standard', css, visibility: b.visibility === 'members' ? 'members' : 'public' };
+          const next = { id, slug, name, tagline, mark, color: COLORS[b.color] ? b.color : 'blue', theme: THEMES[b.theme] ? b.theme : 'standard', design: cleanDesign(b.design), css, visibility: b.visibility === 'members' ? 'members' : 'public' };
           if (cur) Object.assign(cur, next); else doc.media.push(next);
         });
         if (res.headersSent) return;

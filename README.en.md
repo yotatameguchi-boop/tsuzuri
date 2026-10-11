@@ -21,7 +21,8 @@ Demo: https://tsuzuri-omega.vercel.app (sample content is in Japanese)
 - **Restricted reading**: make individual posts or the whole site visible to logged-in members only. Read-only accounts are available.
 - **Document syntax**: footnotes, math (KaTeX), syntax highlighting and attachments (PDF, Word, Excel, PowerPoint, CSV, ZIP).
 - **Portable**: export each post as Markdown or a self-contained HTML file (interactive blocks keep working), or the whole site as JSON.
-- **Multiple publications**: run several differently named media (e.g. a local-news site and a lifestyle magazine) from one Tsuzuri. Each has its own name, logo, color, design preset (standard, pop, magazine, natural, simple, tech), optional custom CSS and visibility, plus its own home, categories, search and RSS
+- **Multiple publications**: run several differently named media (e.g. a local-news site and a lifestyle magazine) from one Tsuzuri. Each has its own name, logo and visibility, plus its own home, categories, search and RSS
+- **Deep per-publication design**: start from six presets (standard, pop, magazine, natural, simple, tech), then pick any accent color, heading and body fonts (about 15 Japanese typefaces), text size, content width, corner radius, H2/H3 styles, header style, article list layout (list, cards, two columns), background, link style, logo image, cover image and footer text, with a live preview. Custom CSS is available too. Custom colors are automatically adjusted to stay readable in light and dark mode
 - **Small**: no framework, two dependencies (`@vercel/blob`, `@vercel/functions`).
 
 ## How it differs from WordPress
@@ -82,7 +83,7 @@ Write settings between `---` lines at the very top of a post to switch its publi
 
 ```
 ---
-media: ashikamo
+media: machi
 theme: pop
 color: green
 category: Cafes
