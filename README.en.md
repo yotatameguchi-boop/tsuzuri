@@ -23,6 +23,27 @@ Demo: https://tsuzuri-omega.vercel.app (sample content is in Japanese)
 - **Portable**: export each post as Markdown or a self-contained HTML file (interactive blocks keep working), or the whole site as JSON.
 - **Small**: no framework, two dependencies (`@vercel/blob`, `@vercel/functions`).
 
+## How it differs from WordPress
+
+**Tsuzuri focuses on writing and publishing interactive documents, and keeps both the editing workflow and the maintenance to a minimum.** WordPress can do almost anything, but that flexibility costs time.
+
+| | WordPress | Tsuzuri |
+|---|---|---|
+| Writing | Add blocks one by one and configure them in the side panel; many screens and plugin settings | Type plain text and press `/` at the start of a line to insert a block. Two buttons: save draft and publish |
+| Interactive content | Quizzes, calculators and charts need plugins, which must be found, installed and kept compatible | Quizzes, calculators with sliders, charts, steps, tabs, image comparison and glossary tooltips are built in |
+| Maintenance | Core, theme and plugin updates, PHP and database upkeep, backups and security hardening | Nothing to update. Vercel runs the server, and every saved version is kept automatically |
+| Source format | Blocks are HTML plus comments, which is hard to move to other tools | Readable text (extended Markdown). Export to Markdown, HTML or JSON at any time |
+| Speed and publishing | Tune caching with plugins | Pages are server-rendered, cached on the CDN, and replaced the moment content changes |
+| As a documentation site | Chapters, footnotes, math, attachments and members-only pages come from combining themes and plugins | Categories, chapters, breadcrumbs, previous/next links, search, footnotes, math, attachments and members-only pages are built in |
+| Concurrent editing | When two people open the same post, the later save wins (edit locks prevent this) | Each post has a revision number. On a conflict you choose to open the latest version or overwrite with yours; saves to different posts never collide |
+
+WordPress is the better fit when you need:
+
+- Extensive visual or functional customization through themes and plugins
+- Comments, e-commerce or multilingual sites
+- A large ecosystem of documentation and people you can hire
+- Fully visual, drag-and-drop page building (Tsuzuri shows the source and the reader view side by side)
+
 ## Writing syntax
 
 You never have to type these by hand (the `/` palette inserts them), but this is what the source looks like:
