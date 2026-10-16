@@ -23,6 +23,7 @@ Demo: https://tsuzuri-omega.vercel.app (sample content is in Japanese)
 - **Portable**: export each post as Markdown or a self-contained HTML file (interactive blocks keep working), or the whole site as JSON.
 - **Multiple publications**: run several differently named media (e.g. a local-news site and a lifestyle magazine) from one Tsuzuri. Each has its own name, logo and visibility, plus its own home, categories, search and RSS
 - **Deep per-publication design**: start from six presets (standard, pop, magazine, natural, simple, tech), then pick any accent color, heading and body fonts (about 15 Japanese typefaces), text size, content width, corner radius, H2/H3 styles, header style, article list layout (list, cards, two columns), background, link style, logo image, cover image and footer text, with a live preview. Custom CSS is available too. Custom colors are automatically adjusted to stay readable in light and dark mode
+- **Build any website**: fixed pages (about, pricing, contact) kept out of article lists, Markdown menus with dropdowns and a mobile toggle, and any page can be the home page. Page blocks: hero, feature cards, color band, FAQ, call-to-action band, photo gallery, latest posts, YouTube/Google Maps embeds and contact forms (with an inbox and Slack/Discord notifications)
 - **Small**: no framework, two dependencies (`@vercel/blob`, `@vercel/functions`).
 
 ## How it differs from WordPress
@@ -76,6 +77,10 @@ Monthly = Hourly wage * Hours per week * 4 | yen
 Footnotes use `text[^1]` with `[^1]: note`, math uses `$a^2$` or `$$ … $$`, fenced code takes a language name, and a line containing only `[file.pdf](URL)` becomes an attachment card.
 
 Block names also accept Japanese aliases (`:::クイズ`, `:::計算`, `:::グラフ`, `:::ポイント` …).
+
+## Page blocks
+
+`:::hero`, `:::cards` (items separated by `@`), `:::band`, `:::faq`, `:::cta`, `:::gallery`, `:::posts Title | count | category`, `:::contact` (fields as `- Label*（メール）` etc.) and bare YouTube/Vimeo/Google Maps URLs. Mark a post as a page with `type: page` in front matter or in the settings panel; menus and the home page are set per publication. Form submissions go to the admin inbox (exportable as CSV) and optionally to a Slack/Discord webhook.
 
 ## Switching with front matter
 

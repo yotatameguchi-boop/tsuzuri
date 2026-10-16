@@ -353,3 +353,74 @@ test('複数のメディア：名前・色・URLのちがうメディアを1つ�
   assert.equal((await call('DELETE', '/api/posts/f1', { cookie: S.admin, body: { baseRev: 1 } })).status, 200);
   assert.equal((await call('DELETE', '/api/media/m3', { cookie: S.admin })).status, 200);
 });
+
+test('Webサイトとして：固定ページ・トップページ・メニュー・ページの部品', async () => {
+  const content = (await call('GET', '/api/content', { cookie: S.admin })).json;
+  const main = content.media[0];
+  const put = (id, post) => call('PUT', `/api/posts/${id}`, { cookie: S.admin, body: { post: { draft: false, media: main.id, ...post } } });
+  const top = '---\n種類: ページ\n---\n:::hero 地域の暮らしを、もっと近くに\n町の店と人を紹介しています。\n[[相談する]](contact)\n:::\n\n:::cards 3つの特徴\n@ 取材\n足で集めた話\n@ 地図\nお店の場所\n:::\n\n:::faq よくある質問\n@ 無料ですか？\nはい。\n:::\n\n:::posts 新着記事 | 3\n:::\n\nhttps://www.youtube.com/watch?v=abcdefghijk';
+  const r1 = await put('pg-top', { slug: 'top', title: 'トップ', body: top });
+  assert.equal(r1.status, 200);
+  assert.equal(r1.json.post.kind, 'page', '原稿の先頭の「種類: ページ」で固定ページになる');
+  await put('pg-about', { slug: 'about', title: '会社概要', body: '所在地や連絡先です。', kind: 'page' });
+
+  /* 固定ページは記事の一覧・RSS に出ない */
+  const media = (await call('GET', '/api/content', { cookie: S.admin })).json.media;
+  const firstMedia = media[0];
+  const base = media.length > 1 ? '/' + firstMedia.slug : '';
+  assert.doesNotMatch((await call('GET', base + '/')).text, /会社概要/);
+  assert.doesNotMatch((await call('GET', base + '/feed.xml')).text, /会社概要/);
+  assert.match((await call('GET', '/sitemap.xml')).text, /\/about</, 'サイトマップには入る');
+  const about = (await call('GET', base + '/about')).text;
+  assert.match(about, /class="page-body"/);
+  assert.match(about, /<h1>会社概要<\/h1>/);
+  assert.doesNotMatch(about, /分で読めます/, '固定ページには日付や読む時間を出さない');
+
+  /* トップページとメニュー */
+  const menu = '- [ホーム](/)\n- [会社概要](about)\n- [サービス](services)\n  - [料金](pricing)\n- [記事](articles)\n- [外のサイト](https://example.com)';
+  assert.equal((await call('PUT', `/api/media/${firstMedia.id}`, { cookie: S.admin, body: { ...firstMedia, home: 'pg-top', menu } })).status, 200);
+  const home = (await call('GET', base + '/')).text;
+  assert.match(home, /class="sec hero"[\s\S]*<h1>地域の暮らしを、もっと近くに<\/h1>/, 'トップが固定ページになり、ヒーローの見出しが h1');
+  assert.doesNotMatch(home, /<header class="page-head">/, 'ヒーローで始まるページはタイトルを重ねて出さない');
+  assert.match(home, /class="sec cards"[\s\S]*<h3>取材<\/h3>/);
+  assert.match(home, /<details class="faq-q"><summary>無料ですか？/);
+  assert.match(home, /class="post-cards"/, '記事の一覧を埋め込める');
+  assert.match(home, /<iframe src="https:\/\/www.youtube-nocookie.com\/embed\/abcdefghijk"/);
+  assert.match(home, new RegExp(`<nav class="site-menu"[\\s\\S]*href="${base}/about">会社概要<\\/a>`));
+  assert.match(home, /class="has-sub"><span class="menu-label">サービス|class="has-sub"><a href="[^"]*services">サービス<\/a><ul class="sub"><li><a href="[^"]*pricing">料金/);
+  assert.match(home, /href="https:\/\/example.com" target="_blank" rel="noopener">外のサイト/);
+  const list = await call('GET', base + '/articles');
+  assert.equal(list.status, 200);
+  assert.match(list.text, /<h1>記事の一覧<\/h1>/, 'トップを固定ページにしても、記事の一覧は /articles で読める');
+  assert.equal((await call('PUT', `/api/media/${firstMedia.id}`, { cookie: S.admin, body: { ...firstMedia, home: 'no-such-page' } })).status, 200);
+  assert.equal((await call('GET', '/api/content', { cookie: S.admin })).json.media[0].home, '', '固定ページでないものはトップにできない');
+});
+
+test('問い合わせフォーム：受け付け、迷惑な送信を断り、管理者の受信箱に入る', async () => {
+  const send = (body, headers = {}) => call('POST', '/api/forms', { body, headers: { 'content-type': 'application/json', ...headers } });
+  const ok = await send({ _form: 'お問い合わせ', _page: '/contact', _t: '12', お名前: '山田', メールアドレス: 'y@example.com', 内容: '見積もりをお願いします' });
+  assert.equal(ok.status, 200);
+  assert.equal((await send({ _t: '0', お名前: 'bot' })).status, 400, '開いてすぐの送信は断る');
+  assert.equal((await send({ _t: '9', _hp: 'spam', お名前: 'bot' })).status, 200, '見えない欄に入力があると、受け付けたふりをして捨てる');
+  assert.equal((await send({ _t: '9' })).status, 400, '中身が空なら断る');
+  assert.equal((await send({ _t: '9', a: 'b' }, { origin: 'https://evil.example' })).status, 403, 'ほかのサイトからの送信は断る');
+  const form = await call('POST', '/api/forms', { body: 'お名前=%E4%BD%90%E8%97%A4&_form=%E5%95%8F%E3%81%84%E5%90%88%E3%82%8F%E3%81%9B&_page=%2Fcontact', headers: { 'content-type': 'application/x-www-form-urlencoded' } });
+  assert.equal(form.status, 200);
+  assert.match(form.text, /送信しました/, 'JavaScript が動かなくても送れる');
+
+  assert.equal((await call('GET', '/api/inbox')).status, 401);
+  const w = (await call('POST', '/api/login', { body: { loginId: 'sato', password: 'sato-reset-789' } })).cookie;
+  assert.equal((await call('GET', '/api/inbox', { cookie: w })).status, 403, '受信箱は管理者だけ');
+  const inbox = (await call('GET', '/api/inbox', { cookie: S.admin })).json.messages;
+  assert.equal(inbox.length, 2, 'まともな2件だけが入る');
+  assert.equal(inbox[1].fields.find(f => f.label === 'メールアドレス').value, 'y@example.com');
+  assert.ok(!inbox.some(m => m.fields.some(f => f.value === 'bot')));
+  assert.equal((await call('PATCH', `/api/inbox/${inbox[0].id}`, { cookie: S.admin, body: { read: true } })).status, 200);
+  assert.equal((await call('GET', '/api/inbox', { cookie: S.admin })).json.messages[0].read, true);
+
+  const site = (await call('GET', '/api/content', { cookie: S.admin })).json.site;
+  assert.equal((await call('PUT', '/api/site', { cookie: S.admin, body: { ...site, formWebhook: 'http://insecure.example' } })).status, 400, '通知先は https だけ');
+  assert.equal((await call('PUT', '/api/site', { cookie: S.admin, body: { ...site, formWebhook: 'https://hooks.example.com/abc' } })).status, 200);
+  assert.equal((await call('GET', '/api/content', { cookie: w })).json.site.formWebhook, '(設定済み)', '通知先のURLは書き手には見せない');
+  await call('PUT', '/api/site', { cookie: S.admin, body: { ...site, formWebhook: '' } });
+});

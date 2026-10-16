@@ -20,8 +20,21 @@ const LIVE_ALIAS = {
 };
 const LIVE_LABEL = { quiz: 'クイズ', calc: '計算', chart: 'グラフ', tabs: 'タブ', steps: '手順', details: '折りたたみ', compare: '比較' };
 
-function makeCtx(posts, resolve, href) {
-  return { posts: posts || [], resolve: resolve || (u => u), href: href || (slug => '/' + slug), headings: [], links: new Set(), uid: 0, notes: new Map(), noteOrder: [] };
+/* ページを組み立てる部品（固定ページで使う。記事の中でも使える） */
+const SECTION_ALIAS = {
+  hero: 'hero', ヒーロー: 'hero', 大見出し: 'hero',
+  cards: 'cards', columns: 'cards', カード: 'cards', 特徴: 'cards',
+  band: 'band', 帯: 'band', 色の帯: 'band', section: 'band',
+  faq: 'faq', よくある質問: 'faq', 質問: 'faq',
+  cta: 'cta', 行動: 'cta', 呼びかけ: 'cta',
+  gallery: 'gallery', ギャラリー: 'gallery', 写真: 'gallery',
+  posts: 'posts', 記事一覧: 'posts', 新着: 'posts',
+  contact: 'contact', form: 'contact', 問い合わせ: 'contact', お問い合わせ: 'contact', フォーム: 'contact',
+  embed: 'embed', 埋め込み: 'embed',
+};
+
+function makeCtx(posts, resolve, href, opts = {}) {
+  return { posts: posts || [], resolve: resolve || (u => u), href: href || (slug => '/' + slug), headings: [], links: new Set(), uid: 0, notes: new Map(), noteOrder: [], heroes: 0, forms: 0, mediaId: opts.mediaId || null };
 }
 
 function inline(src, ctx) {
@@ -108,6 +121,26 @@ function media(alt, url, cap, ctx) {
   const src = esc(safeUrl(ctx.resolve(url)));
   if (/\.(mp4|webm|mov)(\?|$)/i.test(url)) return `<figure><video src="${src}" controls playsinline preload="metadata"></video>${c}</figure>`;
   return `<figure><img src="${src}" alt="${esc(alt)}" loading="lazy">${c}</figure>`;
+}
+
+/* 埋め込めるのは、決まったサービスだけ（それ以外はリンクのカードにする） */
+function embedSrc(url) {
+  let u;
+  try { u = new URL(url); } catch { return null; }
+  const host = u.hostname.replace(/^www\./, '');
+  let id;
+  if (host === 'youtu.be') id = u.pathname.slice(1);
+  else if (/(^|\.)youtube\.com$/.test(host)) id = u.searchParams.get('v') || (u.pathname.match(/^\/(?:shorts|embed|live)\/([\w-]+)/) || [])[1];
+  if (id && /^[\w-]{6,20}$/.test(id)) return { src: `https://www.youtube-nocookie.com/embed/${id}`, kind: 'video' };
+  if (host === 'vimeo.com' && /^\/\d+$/.test(u.pathname)) return { src: `https://player.vimeo.com/video${u.pathname}`, kind: 'video' };
+  if (host === 'player.vimeo.com') return { src: u.href, kind: 'video' };
+  if (host === 'google.com' && u.pathname.startsWith('/maps/embed')) return { src: u.href, kind: 'map' };
+  return null;
+}
+function embedHtml(url, title = '') {
+  const e = embedSrc(url);
+  if (!e) return linkCard(url);
+  return `<figure class="embed ${e.kind}"><iframe src="${esc(e.src)}" title="${esc(title || (e.kind === 'map' ? '地図' : '動画'))}" loading="lazy" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"${e.kind === 'video' ? ' allow="accelerometer; encrypted-media; gyroscope; picture-in-picture; fullscreen"' : ''}></iframe></figure>`;
 }
 
 function linkCard(url) {
@@ -221,6 +254,88 @@ function renderLive(kind, arg, inner, ctx) {
   return '';
 }
 
+/* ---- ページの部品 ---- */
+const isMedia = l => RE.media.test(l);
+const pickImage = lines => { const k = lines.findIndex(isMedia); if (k < 0) return [null, lines]; const m = lines[k].match(RE.media); return [{ alt: m[1], url: m[2] }, lines.filter((_, j) => j !== k)]; };
+const FIELD_TYPE = { メール: 'email', email: 'email', 電話: 'tel', tel: 'tel', 長文: 'textarea', textarea: 'textarea', 数字: 'number', number: 'number', 日付: 'date', date: 'date', 選択: 'select', select: 'select', チェック: 'checkbox', checkbox: 'checkbox' };
+
+function renderSection(kind, arg, inner, ctx) {
+  if (kind === 'hero') {
+    const [img, rest] = pickImage(inner);
+    const tag = ctx.heroes++ === 0 ? 'h1' : 'h2';
+    const style = img && img.url ? ` style="--hero-img:url('${esc(safeUrl(ctx.resolve(img.url))).replace(/'/g, '%27')}')"` : '';
+    return `<section class="sec hero${img && img.url ? ' with-img' : ''}"${style}><div class="sec-in">${arg ? `<${tag}>${inline(arg, ctx)}</${tag}>` : ''}${parse(rest, ctx)}</div></section>`;
+  }
+  if (kind === 'band') return `<section class="sec band"><div class="sec-in">${arg ? `<h2 class="sec-h">${inline(arg, ctx)}</h2>` : ''}${parse(inner, ctx)}</div></section>`;
+  if (kind === 'cta') return `<section class="sec cta-band"><div class="sec-in">${arg ? `<h2 class="sec-h">${inline(arg, ctx)}</h2>` : ''}${parse(inner, ctx)}</div></section>`;
+  if (kind === 'cards') {
+    const items = sections(inner).map(sct => {
+      const [img, rest] = pickImage(sct.lines);
+      return `<div class="sec-card">${img && img.url ? `<img src="${esc(safeUrl(ctx.resolve(img.url)))}" alt="${esc(img.alt)}" loading="lazy">` : ''}<div class="sc-body">${sct.name ? `<h3>${inline(sct.name, ctx)}</h3>` : ''}${parse(rest, ctx)}</div></div>`;
+    });
+    return `<section class="sec cards"><div class="sec-in">${arg ? `<h2 class="sec-h">${inline(arg, ctx)}</h2>` : ''}<div class="sec-grid n${Math.min(items.length, 4)}">${items.join('')}</div></div></section>`;
+  }
+  if (kind === 'faq') {
+    const qs = sections(inner).map(q => `<details class="faq-q"><summary>${inline(q.name || '質問', ctx)}</summary><div class="faq-a">${parse(q.lines, ctx)}</div></details>`);
+    return `<section class="sec faq"><div class="sec-in">${arg ? `<h2 class="sec-h">${inline(arg, ctx)}</h2>` : ''}${qs.join('')}</div></section>`;
+  }
+  if (kind === 'gallery') {
+    const imgs = inner.map(l => l.match(RE.media)).filter(Boolean);
+    return `<section class="sec gallery"><div class="sec-in">${arg ? `<h2 class="sec-h">${inline(arg, ctx)}</h2>` : ''}<div class="gal">${imgs.map(m => {
+      const src = esc(safeUrl(ctx.resolve(m[2])));
+      return `<a href="${src}" target="_blank" rel="noopener"><img src="${src}" alt="${esc(m[1])}" loading="lazy">${m[3] ? `<span>${inline(m[3], ctx)}</span>` : ''}</a>`;
+    }).join('')}</div></div></section>`;
+  }
+  if (kind === 'embed') {
+    const url = (arg.match(/https?:\/\/\S+/) || inner.join(' ').match(/https?:\/\/\S+/) || [])[0];
+    return url ? embedHtml(url) : '';
+  }
+  if (kind === 'posts') {
+    const [title, count, category] = arg.split(/[|｜]/).map(x => x.trim());
+    const n = Math.max(1, Math.min(30, parseInt((count || '').normalize('NFKC'), 10) || 6));
+    const list = ctx.posts.filter(p => p.kind !== 'page' && (!ctx.mediaId || !p.media || p.media === ctx.mediaId) && (!category || p.category === category))
+      .sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, n);
+    return `<section class="sec posts-sec"><div class="sec-in">${title ? `<h2 class="sec-h">${inline(title, ctx)}</h2>` : ''}${list.length ? `<div class="post-cards">${list.map(p => {
+      const img = (String(p.body || '').match(/^!\[[^\]]*\]\(([^)\s]+\.(?:jpe?g|png|webp|gif|svg))/mi) || [])[1];
+      return `<a class="post-card" href="${esc(ctx.href(p.slug))}">${img ? `<span class="thumb"><img src="${esc(safeUrl(ctx.resolve(img)))}" alt="" loading="lazy"></span>` : ''}<span class="pc-body"><span class="pc-title">${esc(p.title)}</span><time>${esc((p.date || '').replace(/-/g, '.'))}</time></span></a>`;
+    }).join('')}</div>` : '<p class="empty-note">まだ記事がありません</p>'}</div></section>`;
+  }
+  if (kind === 'contact') {
+    const id = 'f' + (++ctx.forms);
+    let button = '送信する';
+    const fields = [];
+    for (const l of inner) {
+      const b = l.match(/^\s*(?:ボタン|button)\s*[:：]\s*(.+)$/i);
+      if (b) { button = b[1].trim(); continue; }
+      const m = l.match(RE.li);
+      if (!m) continue;
+      let text = m[3].trim(), type = 'text', options = [];
+      const t = text.match(/[（(]([^）)]+)[）)]\s*$/);
+      if (t) {
+        const [k, opts] = t[1].split(/[:：]/);
+        if (FIELD_TYPE[k.trim()] || FIELD_TYPE[k.trim().toLowerCase()]) { type = FIELD_TYPE[k.trim()] || FIELD_TYPE[k.trim().toLowerCase()]; options = (opts || '').split(/[、,，]/).map(x => x.trim()).filter(Boolean); text = text.slice(0, t.index).trim(); }
+      }
+      const required = /[*＊]$/.test(text);
+      const label = text.replace(/[*＊]$/, '').trim().slice(0, 60);
+      if (label) fields.push({ label, type, options, required });
+    }
+    const field = (f, k) => {
+      const fid = `${id}-${k}`, req = f.required ? ' required' : '', name = esc(f.label);
+      const lab = `<label for="${fid}">${esc(f.label)}${f.required ? '<span class="req">必須</span>' : ''}</label>`;
+      if (f.type === 'textarea') return `<div class="ff">${lab}<textarea id="${fid}" name="${name}" rows="5" maxlength="5000"${req}></textarea></div>`;
+      if (f.type === 'select') return `<div class="ff">${lab}<select id="${fid}" name="${name}"${req}><option value="">選んでください</option>${f.options.map(o => `<option>${esc(o)}</option>`).join('')}</select></div>`;
+      if (f.type === 'checkbox') return `<div class="ff check"><label><input type="checkbox" id="${fid}" name="${name}" value="はい"${req}> ${esc(f.label)}${f.required ? '<span class="req">必須</span>' : ''}</label></div>`;
+      const ac = f.type === 'email' ? ' autocomplete="email"' : f.type === 'tel' ? ' autocomplete="tel"' : /名前/.test(f.label) ? ' autocomplete="name"' : '';
+      return `<div class="ff">${lab}<input id="${fid}" type="${f.type}" name="${name}" maxlength="500"${ac}${req}></div>`;
+    };
+    return `<section class="sec contact"><div class="sec-in">${arg ? `<h2 class="sec-h">${inline(arg, ctx)}</h2>` : ''}<form class="contact-form" method="post" action="/api/forms" data-form="${esc(arg || 'お問い合わせ')}">
+<input type="hidden" name="_form" value="${esc(arg || 'お問い合わせ')}"><input type="hidden" name="_page" value=""><input type="hidden" name="_t" value="">
+<div class="hp" aria-hidden="true"><label>この欄は空のままにしてください<input type="text" name="_hp" tabindex="-1" autocomplete="off"></label></div>
+${fields.map(field).join('')}<div class="ff-actions"><button class="btn primary" type="submit">${esc(button)}</button></div><p class="form-msg" role="status"></p></form></div></section>`;
+  }
+  return '';
+}
+
 function stepOf(v) {
   const span = Math.abs(v.max - v.min);
   const dec = Math.max(...[v.min, v.max, String(v.value)].map(x => (String(x).split('.')[1] || '').length));
@@ -266,6 +381,8 @@ function parse(lines, ctx) {
       const name = m[1], low = name.toLowerCase(), arg = m[2].trim();
       const live = LIVE_ALIAS[name] || LIVE_ALIAS[low];
       if (live) { out.push(renderLive(live, arg, buf, ctx)); continue; }
+      const sec = SECTION_ALIAS[name] || SECTION_ALIAS[low];
+      if (sec) { out.push(renderSection(sec, arg, buf, ctx)); continue; }
       const kind = BOX_ALIAS[name] || BOX_ALIAS[low];
       const label = arg || (kind ? BOX_LABEL[kind] : name);
       out.push(`<div class="box ${kind || 'memo'}"><p class="bx-t">${inline(label, ctx)}</p>${parse(buf, ctx)}</div>`);
@@ -316,7 +433,7 @@ function parse(lines, ctx) {
       out.push(`<div class="btns">${btns.join('')}</div>`);
       continue;
     }
-    if ((m = line.match(RE.url))) { out.push(linkCard(m[1])); i++; continue; }
+    if ((m = line.match(RE.url))) { out.push(embedHtml(m[1])); i++; continue; }
     if ((m = line.match(RE.file))) { out.push(fileCard(m[1], m[2], m[3])); i++; continue; }
     const buf = [line]; i++;
     while (i < lines.length && !/^\s*$/.test(lines[i]) && !startsBlock(lines, i)) buf.push(lines[i++]);
@@ -337,6 +454,7 @@ const FM_KEYS = {
   category: 'category', カテゴリ: 'category', カテゴリー: 'category', parent: 'parent', 親: 'parent', 親の記事: 'parent',
   order: 'order', 並び順: 'order', visibility: 'visibility', 読める人: 'visibility', 公開範囲: 'visibility',
   date: 'date', 日付: 'date', slug: 'slug', url: 'slug', URL: 'slug',
+  type: 'kind', kind: 'kind', 種類: 'kind',
 };
 export const THEME_KEYS = { standard: 'standard', 標準: 'standard', pop: 'pop', ポップ: 'pop', magazine: 'magazine', マガジン: 'magazine', natural: 'natural', ナチュラル: 'natural', simple: 'simple', シンプル: 'simple', tech: 'tech', テック: 'tech' };
 export const COLOR_KEYS = { blue: 'blue', 青: 'blue', red: 'red', 赤: 'red', green: 'green', 緑: 'green', orange: 'orange', 橙: 'orange', オレンジ: 'orange', purple: 'purple', 紫: 'purple', teal: 'teal', 青緑: 'teal', ink: 'ink', black: 'ink', 黒: 'ink' };
@@ -374,11 +492,12 @@ function resolveMeta(meta, { media = [], posts = [], selfId = null } = {}) {
   }
   if (meta.date) { const d = meta.date.normalize('NFKC').match(/^(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})/); if (d) out.date = `${d[1]}-${d[2].padStart(2, '0')}-${d[3].padStart(2, '0')}`; }
   if (meta.slug && /^[A-Za-z0-9._~-]{1,80}$/.test(meta.slug.trim())) out.slug = meta.slug.trim();
+  if (meta.kind !== undefined) out.kind = /^(page|ページ|固定ページ|固定)/i.test(meta.kind.trim()) ? 'page' : 'post';
   return out;
 }
 
-function renderBody(body, posts, resolve, href) {
-  const ctx = makeCtx(posts, resolve, href);
+function renderBody(body, posts, resolve, href, opts = {}) {
+  const ctx = makeCtx(posts, resolve, href, opts);
   body = frontMatter(body).body;
   const lines = [];
   let fence = false;
@@ -478,4 +597,4 @@ function excerpt(body, n = 120) {
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/[*=~`]/g, '').slice(0, n);
 }
 
-export { frontMatter, resolveMeta, plainText, excerpt, esc, safeUrl, inline, parse, renderBody, liveKinds, evaluate, LIVE_LABEL };
+export { SECTION_ALIAS, embedSrc, frontMatter, resolveMeta, plainText, excerpt, esc, safeUrl, inline, parse, renderBody, liveKinds, evaluate, LIVE_LABEL };

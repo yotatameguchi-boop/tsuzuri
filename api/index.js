@@ -1,5 +1,5 @@
 /* Tsuzuri のサーバー。Vercel ではすべてのURLがここに来て（静的ファイルを除く）、中で振り分ける。 */
-import { frontMatter, resolveMeta } from '../public/assets/render.js';
+import { esc, frontMatter, resolveMeta } from '../public/assets/render.js';
 import { cleanDesign } from '../public/assets/design.js';
 import { getDoc, mutate, allowedType, presignMedia, putLocalMedia, readLocalMedia, useBlob, MEDIA_MAX } from '../lib/store.js';
 import {
@@ -74,6 +74,45 @@ const ROLES = ['admin', 'writer', 'reader'];
 const canWrite = user => user.role === 'admin' || user.role === 'writer';
 const canEdit = (user, post) => user.role === 'admin' || (user.role === 'writer' && post.author && post.author === user.id);
 const activeAdmins = doc => doc.users.filter(u => u.role === 'admin' && !u.disabled);
+
+/* ---- 問い合わせフォームの受付 ----
+   迷惑な送信は、①人には見えない欄に何か入っている ②開いてから2秒未満で送られた ③同じ所から短い間に何度も、で断る */
+const recent = new Map();
+function tooMany(ip) {
+  const now = Date.now();
+  const list = (recent.get(ip) || []).filter(t => now - t < 10 * 60 * 1000);
+  list.push(now);
+  recent.set(ip, list);
+  if (recent.size > 5000) recent.clear();
+  return list.length > 5;
+}
+async function receiveForm(req, res, run) {
+  const type = (req.headers['content-type'] || '').split(';')[0];
+  const raw = (await readBody(req, 32 * 1024)).toString();
+  let f = {};
+  try { f = type === 'application/json' ? JSON.parse(raw || '{}') : Object.fromEntries(new URLSearchParams(raw)); } catch { f = {}; }
+  const html = type !== 'application/json';
+  const done = (status, message) => html
+    ? send(res, status, `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(message)}</title><body style="font-family:sans-serif;max-width:560px;margin:60px auto;padding:0 16px;line-height:1.8"><p>${esc(message)}</p><p><a href="${esc(/^\/[\w\-/%.~]*$/.test(f._page || '') ? f._page : '/')}">← 元のページへ</a></p></body>`, 'text/html; charset=utf-8', { 'Cache-Control': 'no-store' })
+    : json(res, status, { ok: status === 200, message });
+  const ip = String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim();
+  if (f._hp) return done(200, '送信しました。ありがとうございました。');
+  if (!html && !(Number(f._t) >= 2)) return done(400, '送信が早すぎます。内容を確かめてから、もう一度送ってください');
+  if (tooMany(ip)) return done(429, '短い間に何度も送られています。少し時間をおいてください');
+  const fields = Object.entries(f).filter(([k]) => !k.startsWith('_')).slice(0, 30)
+    .map(([label, value]) => ({ label: String(label).slice(0, 60), value: String(value ?? '').slice(0, 5000) }));
+  if (!fields.some(x => x.value.trim())) return done(400, '入力された内容がありません');
+  const msg = { id: newId('q'), at: new Date().toISOString(), form: String(f._form || 'お問い合わせ').slice(0, 60), page: String(f._page || '').slice(0, 200), fields, read: false };
+  await run('inbox', doc => { doc.messages.unshift(msg); doc.messages = doc.messages.slice(0, 2000); });
+  if (res.headersSent) return;
+  /* 通知（Slack・Discord などの受け口）。失敗しても受付は済んでいる */
+  const { data } = await getDoc('content');
+  if (data.site.formWebhook) {
+    const text = `【${msg.form}】${msg.page ? `（${msg.page}）` : ''}\n` + fields.map(x => `${x.label}：${x.value}`).join('\n');
+    try { await fetch(data.site.formWebhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, content: text.slice(0, 1900) }), signal: AbortSignal.timeout(3000) }); } catch {}
+  }
+  return done(200, '送信しました。ありがとうございました。');
+}
 
 export default async function handler(req, res) {
   const url = new URL(req.url, 'http://x');
@@ -160,7 +199,30 @@ export default async function handler(req, res) {
         return json(res, 200, { user: publicUser(created) }, { 'Set-Cookie': issueCookie(created) });
       }
 
+      if (pathname === '/api/forms' && method === 'POST') return receiveForm(req, res, run);
+
       if (!me) return json(res, 401, { error: 'login_required', message: 'ログインしてください' });
+
+      if (pathname === '/api/inbox' || pathname.startsWith('/api/inbox/')) {
+        if (me.role !== 'admin') return json(res, 403, { error: 'forbidden', message: '受信箱は管理者だけが見られます' });
+        if (pathname === '/api/inbox' && method === 'GET') {
+          const { data } = await getDoc('inbox');
+          return json(res, 200, { messages: data.messages, webhook: !!(await getDoc('content')).data.site.formWebhook });
+        }
+        const im = pathname.match(/^\/api\/inbox\/([A-Za-z0-9_-]+)$/);
+        if (im && (method === 'PATCH' || method === 'DELETE')) {
+          const b = method === 'PATCH' ? await readJson(req) : {};
+          await run('inbox', doc => {
+            const msg = doc.messages.find(x => x.id === im[1]);
+            if (!msg) return fail(404, 'not_found', 'そのお問い合わせは見つかりません');
+            if (method === 'DELETE') doc.messages = doc.messages.filter(x => x !== msg);
+            else msg.read = !!b.read;
+          });
+          if (res.headersSent) return;
+          return json(res, 200, { ok: true });
+        }
+        return json(res, 404, { error: 'not_found' });
+      }
 
       if (pathname === '/api/account' && method === 'POST') {
         const b = await readJson(req);
@@ -200,6 +262,8 @@ export default async function handler(req, res) {
 
       if (pathname === '/api/content' && method === 'GET') {
         const { data } = await getDoc('content');
+        /* 通知先のURLは管理者にだけ見せる */
+        if (me.role !== 'admin') data.site = { ...data.site, formWebhook: data.site.formWebhook ? '(設定済み)' : '' };
         return json(res, 200, data);
       }
 
@@ -241,7 +305,7 @@ export default async function handler(req, res) {
           const visibility = p.visibility === 'members' ? 'members' : 'public';
           const next = {
             id, slug: p.slug, title: p.title, body: p.body, date: p.date || new Date().toISOString().slice(0, 10), draft: !!p.draft,
-            category, parent, order, visibility, media,
+            category, parent, order, visibility, media, kind: p.kind === 'page' ? 'page' : 'post',
             theme: THEMES[p.theme] ? p.theme : null, color: COLORS[p.color] ? p.color : null,
             author: cur ? cur.author : me.id, authorName: cur ? cur.authorName : me.name,
             rev: (cur ? cur.rev : 0) + 1, updated: new Date().toISOString().slice(0, 10),
@@ -276,7 +340,9 @@ export default async function handler(req, res) {
           if (doc.posts.some(p => p.slug === slug)) return fail(400, 'invalid', 'そのURLは記事で使われています');
           const css = String(b.css || '');
           if (css.length > 20000) return fail(400, 'invalid', '追加のCSSは2万文字までです');
-          const next = { id, slug, name, tagline, mark, color: COLORS[b.color] ? b.color : 'blue', theme: THEMES[b.theme] ? b.theme : 'standard', design: cleanDesign(b.design), css, visibility: b.visibility === 'members' ? 'members' : 'public' };
+          const menu = String(b.menu || '').slice(0, 5000);
+          const home = b.home && doc.posts.some(p => p.id === b.home && p.kind === 'page') ? b.home : '';
+          const next = { id, slug, name, tagline, mark, color: COLORS[b.color] ? b.color : 'blue', theme: THEMES[b.theme] ? b.theme : 'standard', design: cleanDesign(b.design), css, menu, home, visibility: b.visibility === 'members' ? 'members' : 'public' };
           if (cur) Object.assign(cur, next); else doc.media.push(next);
         });
         if (res.headersSent) return;
@@ -289,7 +355,9 @@ export default async function handler(req, res) {
         const name = String(b.name || '').trim(), tagline = String(b.tagline || '').trim();
         if (!name || name.length > 60 || tagline.length > 200) return json(res, 400, { error: 'invalid', message: 'サイト名は1〜60文字、説明は200文字までです' });
         const visibility = b.visibility === 'members' ? 'members' : 'public';
-        await run('content', doc => { doc.site = { ...doc.site, name, tagline, visibility }; });
+        const formWebhook = String(b.formWebhook || '').trim();
+        if (formWebhook && !/^https:\/\/[^\s"'<>]+$/.test(formWebhook)) return json(res, 400, { error: 'invalid', message: '通知先のURLは https:// から始まるものにしてください' });
+        await run('content', doc => { doc.site = { ...doc.site, name, tagline, visibility, formWebhook }; });
         if (res.headersSent) return;
         return json(res, 200, { ok: true });
       }
@@ -407,6 +475,7 @@ export default async function handler(req, res) {
     if (mediaIsPrivate(data, media) && !viewer) return page(res, 401, gatePage(data, o, pathname, media), 'text/html; charset=utf-8', false);
 
     if (!segs.length) return html(200, homePage(data, o, viewer, media));
+    if (segs.length === 1 && segs[0] === 'articles') return html(200, homePage(data, o, viewer, media, { listOnly: true }));
     if (segs.length === 1 && segs[0] === 'search') return html(200, searchPage(data, o, viewer, q, media));
     if (segs.length === 1 && segs[0] === 'feed.xml') return page(res, 200, feed(data, o, media), 'application/rss+xml; charset=utf-8');
     if (segs.length === 2 && segs[0] === 'c') {

@@ -12,7 +12,7 @@ const readMin = body => Math.max(1, Math.round(String(body || '').replace(/\s/g,
 const isAdmin = () => S.me && S.me.role === 'admin';
 const canEdit = p => isAdmin() || !p.rev || p.author === S.me.id;
 const ROLE = { admin: '管理者', writer: '書き手', reader: '閲覧者' };
-const POST_FIELDS = ['slug', 'title', 'body', 'date', 'draft', 'category', 'parent', 'order', 'visibility', 'media', 'theme', 'color'];
+const POST_FIELDS = ['slug', 'title', 'body', 'date', 'draft', 'category', 'parent', 'order', 'visibility', 'media', 'theme', 'color', 'kind'];
 const pick = p => Object.fromEntries(POST_FIELDS.map(k => [k, p[k] ?? null]));
 const nextPath = () => { const n = new URLSearchParams(location.search).get('next'); return n && /^\/(?!\/)/.test(n) ? n : null; };
 
@@ -92,12 +92,14 @@ function renderNav() {
   nav.innerHTML = `<a class="btn ghost" href="/" target="_blank" rel="noopener">サイトを見る ↗</a>
     <details class="menu"><summary class="btn ghost">${esc(S.me.name)} ▾</summary><div class="menu-list">
       <a href="/write">記事の一覧</a>
-      ${isAdmin() ? '<a href="/write#media">メディアの設定</a><a href="/write#members">メンバー</a>' : ''}
+      ${isAdmin() ? `<a href="/write#inbox">受信箱${S.unread ? `（${S.unread}）` : ''}</a><a href="/write#media">メディアの設定</a><a href="/write#members">メンバー</a>` : ''}
       <a href="/write#account">自分の設定</a>
       <button type="button" id="logout">ログアウト</button>
     </div></details>
+    <button class="btn" type="button" id="new-page">＋ ページ</button>
     <button class="btn primary" type="button" id="new-post">＋ 新しい記事</button>`;
-  $('new-post').addEventListener('click', newPost);
+  $('new-post').addEventListener('click', () => newPost('post'));
+  $('new-page').addEventListener('click', () => newPost('page'));
   $('logout').addEventListener('click', async () => { await post('/api/logout'); S.me = null; renderGate('login', 'ログアウトしました。'); });
   nav.querySelectorAll('.menu-list a').forEach(a => a.addEventListener('click', () => nav.querySelector('details').removeAttribute('open')));
 }
@@ -115,17 +117,22 @@ function renderList() {
   document.title = '記事の一覧 | ' + (S.data.site.name || 'Tsuzuri');
   const site = S.data.site;
   const filter = S.mediaFilter && S.data.media.some(m => m.id === S.mediaFilter) ? S.mediaFilter : null;
-  const posts = S.data.posts.filter(p => (canEdit(p) || !p.draft) && (!filter || p.media === filter)).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const kind = S.kindFilter === 'page' ? 'page' : 'post';
+  const posts = S.data.posts.filter(p => (canEdit(p) || !p.draft) && (!filter || p.media === filter) && (p.kind === 'page' ? 'page' : 'post') === kind)
+    .sort((a, b) => kind === 'page' ? (a.order ?? 1e9) - (b.order ?? 1e9) || a.title.localeCompare(b.title) : (b.date || '').localeCompare(a.date || ''));
+  const counts = { post: S.data.posts.filter(p => p.kind !== 'page').length, page: S.data.posts.filter(p => p.kind === 'page').length };
+  const kindTabs = `<div class="media-tabs kind-tabs" role="tablist"><button type="button" role="tab" data-kind="post" aria-selected="${kind === 'post'}">記事 ${counts.post}</button><button type="button" role="tab" data-kind="page" aria-selected="${kind === 'page'}">固定ページ ${counts.page}</button></div>`;
   const title = multiMedia() ? (filter ? mediaById(filter).name : site.name || 'すべてのメディア') : S.data.media[0].name;
   const tabs = multiMedia() ? `<div class="media-tabs" role="tablist"><button type="button" role="tab" data-filter="" aria-selected="${!filter}">すべて</button>${S.data.media.map(m =>
     `<button type="button" role="tab" data-filter="${esc(m.id)}" aria-selected="${filter === m.id}">${markHtml(m)}${esc(m.name)}</button>`).join('')}</div>` : '';
-  root.innerHTML = `<section class="home-head"><h1>${esc(title)}</h1>${tabs}` +
+  root.innerHTML = `<section class="home-head"><h1>${esc(title)}</h1>${tabs}${kindTabs}${kind === 'page' ? '<p class="sub" style="margin-top:10px">固定ページは「会社概要」「料金」「お問い合わせ」のような、記事の一覧に混ざらないページです。メニューに並べたり、メディアのトップにしたりできます（メディアの設定から）。</p>' : ''}` +
     (isAdmin() ? `<div class="row" style="margin-top:10px;margin-left:-10px;display:flex;gap:4px;flex-wrap:wrap"><a class="btn ghost" href="/write#media">メディアの設定</a><a class="btn ghost" href="/api/export" download>全記事を書き出す（JSON）</a></div>` : '') +
     `</section><section class="posts" aria-label="記事一覧">${posts.length ? posts.map(p => {
       const kinds = liveKinds(p.body);
       const mine = canEdit(p);
       const chips = [
         ...(p.draft ? ['<span class="chip draft">下書き（読者には見えません）</span>'] : []),
+        ...(S.data.media.some(m => m.home === p.id) ? ['<span class="chip">トップページ</span>'] : []),
         ...(multiMedia() && !filter ? [`<span class="chip draft">${esc(mediaById(p.media).name)}</span>`] : []),
         ...(p.visibility === 'members' ? ['<span class="chip draft">メンバー限定</span>'] : []),
         ...(p.category ? [`<span class="chip draft">${esc(p.category)}</span>`] : []),
@@ -136,10 +143,11 @@ function renderList() {
       return `<div class="pr w"><a class="post-row" href="${href}"${mine ? ` data-edit="${esc(p.id)}"` : ' target="_blank" rel="noopener"'}><time>${fmtDate(p.date)}</time><div><h2 class="t">${esc(p.title || '無題')}</h2></div>` +
         `<p class="x">${esc(excerpt(p.body, 100))}</p><div class="chips">${chips.join('')}</div></a>` +
         (mine ? `<button class="btn row-edit" type="button" data-edit="${esc(p.id)}">編集</button>` : `<a class="btn row-edit" href="${esc(readerHref(p))}" target="_blank" rel="noopener">読む</a>`) + `</div>`;
-    }).join('') : `<div class="empty-note"><p>まだ記事がありません</p><button class="btn primary" type="button" id="first-post">最初の記事を書く</button></div>`}</section>`;
+    }).join('') : `<div class="empty-note"><p>${kind === 'page' ? 'まだ固定ページがありません' : 'まだ記事がありません'}</p><button class="btn primary" type="button" id="first-post">${kind === 'page' ? '最初のページを作る' : '最初の記事を書く'}</button></div>`}</section>`;
   root.querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', e => { e.preventDefault(); openEditor(b.dataset.edit); }));
   root.querySelectorAll('[data-filter]').forEach(b => b.addEventListener('click', () => { S.mediaFilter = b.dataset.filter || null; renderList(); }));
-  $('first-post')?.addEventListener('click', newPost);
+  root.querySelectorAll('[data-kind]').forEach(b => b.addEventListener('click', () => { S.kindFilter = b.dataset.kind; renderList(); }));
+  $('first-post')?.addEventListener('click', () => newPost(kind));
 }
 
 /* ---- メディアの設定（管理者） ---- */
@@ -179,6 +187,12 @@ function mediaForm(m, isNew) {
           ${img('cover', '表紙の画像', 'メディアのトップに大きく出ます。横長の写真が向いています')}
           <label class="field">フッターの一文<input name="d_footer" value="${esc(d.footer || '')}" maxlength="200" placeholder="例：© 2026 まちのたより編集部"></label>
         </details>
+        <details class="fine"${m.menu || m.home ? ' open' : ''}><summary>メニューとトップページ</summary>
+          <label class="field">トップページ<select name="home"><option value="">記事の一覧（新着とカテゴリ）</option>${S.data.posts.filter(x => x.kind === 'page' && x.rev && (isNew || x.media === m.id)).map(x => `<option value="${esc(x.id)}"${m.home === x.id ? ' selected' : ''}>固定ページ「${esc(x.title || '無題')}」</option>`).join('')}</select></label>
+          <p class="sub">固定ページをトップにすると、記事の一覧は <code>${multiMedia() && !isNew ? '/' + esc(m.slug) : ''}/articles</code> に移ります。</p>
+          <label class="field">メニュー（上のバーに並ぶリンク）<textarea name="menu" rows="6" spellcheck="false" placeholder="- [ホーム](/)&#10;- [サービス](services)&#10;  - [料金](pricing)&#10;- [記事](articles)&#10;- [お問い合わせ](contact)">${esc(m.menu || '')}</textarea></label>
+          <p class="sub">1行に1つ、<code>- [表示する文字](行き先)</code> と書きます。字下げした行は、その上の項目の中（ドロップダウン）に入ります。行き先は、固定ページや記事のURL（<code>about</code> など）、トップは <code>/</code>、記事の一覧は <code>articles</code>、ほかのサイトは <code>https://…</code> です。</p>
+        </details>
         <details class="css-more"${m.css ? ' open' : ''}><summary>追加のCSS（上級者向け）</summary>
           <p class="sub">このメディアのページにだけ効く CSS を書けます。例：<code>.prose h2{color:var(--blue)}</code>　色は <code>var(--blue)</code>、背景は <code>var(--bg)</code> で指定すると、暗い画面でも読みやすくなります。</p>
           <textarea name="css" rows="6" spellcheck="false" placeholder="/* 例 */&#10;.home-head h1 { letter-spacing: .1em; }">${esc(m.css || '')}</textarea></details>
@@ -197,7 +211,7 @@ function mediaFromForm(form) {
   const design = {};
   for (const k of DESIGN_KEYS) if (f['d_' + k]) design[k] = f['d_' + k];
   if (f.color === 'custom' && f.accent) design.accent = f.accent;
-  return { name: f.name, mark: f.mark, slug: (f.slug || '').toLowerCase(), tagline: f.tagline, visibility: f.visibility, theme: f.theme,
+  return { name: f.name, mark: f.mark, slug: (f.slug || '').toLowerCase(), tagline: f.tagline, visibility: f.visibility, theme: f.theme, menu: f.menu || '', home: f.home || '',
     color: f.color === 'custom' ? 'blue' : f.color, design: cleanDesign(design), css: f.css || '' };
 }
 
@@ -245,6 +259,8 @@ function renderMedia() {
     <form class="stack" id="site-form"><p class="sub">メディアが2つ以上のとき、サイトのいちばん上（全メディアの入口）に出る名前です。</p>
       <label class="field">名前<input name="name" value="${esc(site.name || '')}" required maxlength="60"></label>
       <label class="field">説明（1行）<input name="tagline" value="${esc(site.tagline || '')}" maxlength="200"></label>
+      <label class="field">問い合わせが届いたときの通知先（任意）<input name="formWebhook" type="url" value="${esc(site.formWebhook || '')}" placeholder="https://hooks.slack.com/services/…"></label>
+      <p class="sub">Slack や Discord の「Incoming Webhook」のURLを入れると、問い合わせが届くたびに中身が送られます。空なら受信箱にだけ入ります。</p>
       <div class="err" role="alert"></div><button class="btn primary" type="submit">保存</button></form>
   </section>`;
   root.querySelectorAll('.media-form').forEach(form => {
@@ -290,7 +306,7 @@ function renderMedia() {
   bindForm($('site-form'), async f => {
     const r = await post('/api/site', { ...site, ...f }, 'PUT');
     if (!r.ok) return r.body.message || '保存できませんでした';
-    S.data.site = { ...site, name: f.name.trim(), tagline: f.tagline.trim() };
+    S.data.site = { ...site, name: f.name.trim(), tagline: f.tagline.trim(), formWebhook: (f.formWebhook || '').trim() };
     toast('保存しました');
   });
 }
@@ -335,6 +351,46 @@ async function uploadFile(file, maxSide) {
 async function reloadContent() {
   const r = await api('/api/content');
   if (r.ok) S.data = { ...r.body, posts: [...r.body.posts, ...S.data.posts.filter(p => !p.rev)] };
+}
+
+/* ---- 受信箱（問い合わせフォームに届いたもの。管理者だけ） ---- */
+async function renderInbox() {
+  document.title = '受信箱 | ' + (S.data.site.name || 'Tsuzuri');
+  root.innerHTML = '<p class="empty-note">読み込み中…</p>';
+  const r = await api('/api/inbox');
+  if (!r.ok) { root.innerHTML = `<p class="empty-note">${esc(r.body.message || '読み込めませんでした')}</p>`; return; }
+  const list = r.body.messages || [];
+  S.unread = list.filter(x => !x.read).length;
+  const when = at => new Date(at).toLocaleString('ja-JP', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  root.innerHTML = `<section class="manage"><h1>受信箱</h1>
+    <p class="sub">固定ページや記事に置いた問い合わせフォーム（<code>:::contact</code>）に届いたものです。${r.body.webhook ? '通知先にも送っています。' : '通知先（Slack など）は「メディアの設定」のいちばん下で決められます。'}</p>
+    ${list.length ? `<div class="row" style="display:flex;gap:8px;margin-bottom:12px"><button class="btn" type="button" id="inbox-csv">CSV で書き出す</button></div>` : ''}
+    <div class="inbox">${list.map(m => `<article class="msg${m.read ? '' : ' unread'}" data-id="${esc(m.id)}">
+      <header><strong>${esc(m.form)}</strong><time>${when(m.at)}</time>${m.page ? `<a href="${esc(m.page)}" target="_blank" rel="noopener">${esc(m.page)}</a>` : ''}${m.read ? '' : '<span class="chip">未読</span>'}</header>
+      <dl>${m.fields.map(f => `<dt>${esc(f.label)}</dt><dd>${esc(f.value).replace(/\n/g, '<br>') || '—'}</dd>`).join('')}</dl>
+      <div class="row"><button class="btn" type="button" data-read="${m.read ? 0 : 1}">${m.read ? '未読に戻す' : '読んだ'}</button><button class="btn ghost" type="button" data-del>削除</button></div>
+    </article>`).join('') || '<p class="empty-note">まだ何も届いていません</p>'}</div></section>`;
+  renderNav();
+  root.querySelectorAll('.msg').forEach(el => {
+    el.querySelector('[data-read]').addEventListener('click', async e => {
+      await post(`/api/inbox/${el.dataset.id}`, { read: e.target.dataset.read === '1' }, 'PATCH');
+      renderInbox();
+    });
+    const del = el.querySelector('[data-del]');
+    del.addEventListener('click', async () => {
+      if (!del.classList.contains('armed')) { del.classList.add('armed'); del.textContent = 'もう一度押すと削除'; setTimeout(() => { del.classList.remove('armed'); del.textContent = '削除'; }, 3000); return; }
+      await api(`/api/inbox/${el.dataset.id}`, { method: 'DELETE', body: '{}' });
+      toast('削除しました'); renderInbox();
+    });
+  });
+  $('inbox-csv')?.addEventListener('click', () => {
+    const labels = [...new Set(list.flatMap(m => m.fields.map(f => f.label)))];
+    const cell = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const rows = [['受け付けた日時', 'フォーム', 'ページ', ...labels], ...list.map(m => [when(m.at), m.form, m.page, ...labels.map(l => (m.fields.find(f => f.label === l) || {}).value || '')])];
+    const url = URL.createObjectURL(new Blob(['\ufeff' + rows.map(r => r.map(cell).join(',')).join('\r\n')], { type: 'text/csv' }));
+    Object.assign(document.createElement('a'), { href: url, download: `inbox-${new Date().toISOString().slice(0, 10)}.csv` }).click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
 }
 
 /* ---- メンバー（管理者） ---- */
@@ -426,6 +482,7 @@ function route() {
   if (S.view === 'edit') return renderEditor();
   if (S.view === 'members' && isAdmin()) return renderMembers();
   if (S.view === 'media' && isAdmin()) return renderMedia();
+  if (S.view === 'inbox' && isAdmin()) return renderInbox();
   if (S.view === 'account') return renderAccount();
   renderList();
 }
@@ -434,7 +491,8 @@ function applyHash() {
   if (inviteToken()) { toast('すでにログインしています。招待リンクは、招待する人に渡してください'); history.replaceState(null, '', '/write'); }
   const h = decodeURIComponent(location.hash.slice(1));
   if (h === 'new') return newPost();
-  if (h === 'members' || h === 'account' || h === 'media') { S.view = h; return route(); }
+  if (h === 'new-page') return newPost('page');
+  if (h === 'members' || h === 'account' || h === 'media' || h === 'inbox') { S.view = h; return route(); }
   const p = h && S.data.posts.find(x => x.slug === h || x.id === h);
   if (p && canEdit(p)) { S.editId = p.id; S.view = 'edit'; return route(); }
   S.view = 'list'; route();
@@ -459,9 +517,10 @@ function backup() {
 const dropBackup = id => { try { localStorage.removeItem(draftKey(id)); } catch {} };
 function markDirty() { S.dirty = true; backup(); updateState(); }
 
-function newPost() {
+function newPost(kind = 'post') {
+  if (kind !== 'page') kind = 'post';
   const id = 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-  S.data.posts.push({ id, slug: 'p-' + Date.now().toString(36), title: '', date: today(), draft: true, body: '', author: S.me.id, authorName: S.me.name, rev: 0, media: S.mediaFilter || S.data.media[0].id });
+  S.data.posts.push({ id, slug: (kind === 'page' ? 'page-' : 'p-') + Date.now().toString(36), title: '', date: today(), draft: true, body: '', author: S.me.id, authorName: S.me.name, rev: 0, media: S.mediaFilter || S.data.media[0].id, kind });
   S.dirty = false;
   openEditor(id);
 }
@@ -699,6 +758,15 @@ const PARTS = [
   { g: '文章', ic: '∑', name: '数式', ds: '$$ で囲むと数式。文中なら $a^2$ のように書く', keys: 'suushiki math tex katex', text: '$$\nE = mc^2\n$$', sel: 'E = mc^2' },
   { g: '文章', ic: '{}', name: 'コード', ds: '```の後ろに言語名を書くと色分けされる', keys: 'code koodo program', text: '```js\nconsole.log("こんにちは")\n```', sel: 'console.log("こんにちは")' },
   { g: '画像・ボタン', ic: '▦', name: '表', ds: '縦横に整理した情報', keys: 'hyou table', text: '| 項目 | 内容 |\n| --- | --- |\n| A | 説明 |\n| B | 説明 |', sel: '項目' },
+  { g: 'ページの部品', ic: '★', name: 'ヒーロー（大きな見出し）', ds: 'ページのいちばん上に置く大きな見出し。画像を入れると背景になる', keys: 'hero hiroo midashi top', text: ':::hero 大きな見出し\nひとことの説明をここに書きます。\n![](背景の画像のURL)\n[[行動してほしいこと]](contact)\n:::', sel: '大きな見出し' },
+  { g: 'ページの部品', ic: '▦', name: '特徴カード', ds: '@ で区切った項目をカードで並べる。画像も入れられる', keys: 'cards kaado tokuchou feature service', text: ':::cards 3つの特徴\n@ 特徴1\n説明\n@ 特徴2\n説明\n@ 特徴3\n説明\n:::', sel: '3つの特徴' },
+  { g: 'ページの部品', ic: '▬', name: '色の帯', ds: '背景に色をつけて、話のまとまりを分ける', keys: 'band obi section', text: ':::band 見出し\n本文\n:::', sel: '見出し' },
+  { g: 'ページの部品', ic: 'Q', name: 'よくある質問', ds: '@ で区切った質問を、押すと答えが開く形で並べる', keys: 'faq yokuaru shitsumon', text: ':::faq よくある質問\n@ 質問1\n答え\n@ 質問2\n答え\n:::', sel: '質問1' },
+  { g: 'ページの部品', ic: '➜', name: '行動を促す帯', ds: '申し込み・問い合わせへ誘う、目立つ帯とボタン', keys: 'cta koudou button', text: ':::cta まずはお気軽にご相談ください\n[[お問い合わせ]](contact)\n:::', sel: 'まずはお気軽にご相談ください' },
+  { g: 'ページの部品', ic: '▣', name: '写真ギャラリー', ds: '画像を並べる。押すと大きく開く', keys: 'gallery shashin photo', text: ':::gallery 写真\n![説明](画像のURL)\n![説明](画像のURL)\n:::', sel: '写真' },
+  { g: 'ページの部品', ic: '≡', name: '記事の一覧', ds: '新しい記事をカードで並べる。「見出し | 件数 | カテゴリ」', keys: 'posts kiji ichiran shinchaku', text: ':::posts 新着記事 | 6\n:::', sel: '新着記事' },
+  { g: 'ページの部品', ic: '✉', name: '問い合わせフォーム', ds: '項目を - で書く。* で必須、（メール）（電話）（長文）（選択：A、B）', keys: 'contact form toiawase foomu', text: ':::contact お問い合わせ\n- お名前*\n- メールアドレス*（メール）\n- 電話番号（電話）\n- ご用件（選択：見積もり、取材、その他）\n- 内容*（長文）\nボタン: 送信する\n:::', sel: 'お問い合わせ' },
+  { g: 'ページの部品', ic: '▶', name: '埋め込み（YouTube・地図）', ds: 'YouTube・Vimeo の URL、Google マップの「地図を埋め込む」の URL', keys: 'embed umekomi youtube map chizu', text: ':::embed https://www.youtube.com/watch?v=\n:::', sel: 'https://www.youtube.com/watch?v=' },
   { g: '画像・ボタン', ic: '◉', name: 'ボタン', ds: '申し込みページなどへの大きなボタン', keys: 'botan button cta', text: '[[ボタンの文字]](https://)', sel: 'ボタンの文字' },
   { g: '動く要素', live: 1, ic: 'Q', name: 'クイズ', ds: '選んで答え合わせ。正解の先頭に * を付けます', keys: 'quiz kuizu', text: ':::quiz 問題文\n- 選択肢\n- *正解の選択肢\n- 選択肢\n> 答えたあとに出る解説\n:::', sel: '問題文' },
   { g: '動く要素', live: 1, ic: '＝', name: '計算', ds: '数字を動かすと答えが変わる。--- の下が答え', keys: 'calc keisan', text: ':::calc 計算のタイトル\n単価 = 1200 円 (500〜3000)\n数量 = 10 個 (1〜50)\n---\n合計 = 単価 * 数量 | 円\n:::', sel: '計算のタイトル' },
@@ -723,6 +791,7 @@ function renderEditor() {
     <div id="ed-note"></div>
     <details class="settings"><summary>記事の設定（整理・読める人・URL・書き出し・削除）</summary><div class="set-grid">
       ${multiMedia() ? `<label class="field">メディア<select id="ed-media">${S.data.media.map(m => `<option value="${esc(m.id)}"${p.media === m.id ? ' selected' : ''}>${esc(m.name)}</option>`).join('')}</select></label>` : ''}
+      <label class="field" style="flex:0 0 150px;min-width:0">種類<select id="ed-kind"><option value="post"${p.kind !== 'page' ? ' selected' : ''}>記事</option><option value="page"${p.kind === 'page' ? ' selected' : ''}>固定ページ</option></select></label>
       <label class="field">カテゴリ（棚）<input id="ed-cat" list="cat-list" value="${esc(p.category || '')}" placeholder="例：マニュアル" maxlength="40">
         <datalist id="cat-list">${[...new Set(S.data.posts.map(x => x.category).filter(Boolean))].map(c => `<option value="${esc(c)}">`).join('')}</datalist></label>
       <label class="field">親の記事（章立て）<select id="ed-parent"><option value="">なし（いちばん上）</option>${parentOptions(p)}</select></label>
@@ -776,7 +845,7 @@ function renderEditor() {
     const keys = Object.keys(meta);
     Object.assign(p, resolveMeta(meta, { media: S.data.media, posts: S.data.posts, selfId: p.id }));
     const set = (id, v) => { const el = $(id); if (el && v !== undefined && el.value !== String(v ?? '')) el.value = v ?? ''; };
-    set('ed-media', p.media); set('ed-cat', p.category); set('ed-order', p.order); set('ed-vis', p.visibility); set('ed-date', p.date); set('ed-slug', p.slug); set('ed-parent', p.parent || '');
+    set('ed-media', p.media); set('ed-kind', p.kind || 'post'); set('ed-cat', p.category); set('ed-order', p.order); set('ed-vis', p.visibility); set('ed-date', p.date); set('ed-slug', p.slug); set('ed-parent', p.parent || '');
     const note = $('fm-note');
     if (note) note.hidden = !keys.length;
   };
@@ -801,6 +870,7 @@ function renderEditor() {
   $('ed-date').addEventListener('change', e => { p.date = e.target.value; markDirty(); });
   $('ed-cat').addEventListener('input', e => { p.category = e.target.value.trim(); markDirty(); });
   $('ed-media')?.addEventListener('change', e => { p.media = e.target.value; markDirty(); });
+  $('ed-kind').addEventListener('change', e => { p.kind = e.target.value; markDirty(); });
   $('ed-parent').addEventListener('change', e => { p.parent = e.target.value || null; markDirty(); });
   $('ed-order').addEventListener('input', e => { p.order = e.target.value === '' ? null : Number(e.target.value); markDirty(); });
   $('ed-vis').addEventListener('change', e => { p.visibility = e.target.value; markDirty(); });
@@ -1005,6 +1075,7 @@ async function start() {
   const r = await api('/api/content');
   if (!r.ok) { root.innerHTML = '<p class="empty-note">記事を読み込めませんでした。少し待ってから再読み込みしてください。</p>'; return; }
   S.data = r.body;
+  if (isAdmin()) api('/api/inbox').then(x => { if (x.ok) { S.unread = x.body.messages.filter(m => !m.read).length; if (S.unread && S.view !== 'edit') renderNav(); } });
   applyHash();
 }
 start();

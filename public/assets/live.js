@@ -172,7 +172,7 @@ window.addEventListener('scroll', () => { if (tipFor) hideTip(); }, { passive: t
 export { hideTip };
 
 /* 記事ページ：目次・進み具合・書き手向けの編集ボタン */
-const article = document.querySelector('.article');
+const article = document.querySelector('.article, .page-body');
 if (article) {
   hydrate(article);
   const bar = document.getElementById('progress');
@@ -200,3 +200,39 @@ if (nav && nav.dataset.slug !== undefined) {
       : `<a class="btn" href="/write">記事の一覧</a><a class="btn primary" href="/write#new">＋ 新しい記事</a>`;
   }).catch(() => {});
 }
+
+/* 問い合わせフォーム：その場で送り、結果をフォームの下に出す。
+   入力にかかった時間を一緒に送り、機械的な送信を見分ける手がかりにする */
+const opened = Date.now();
+document.querySelectorAll('form.contact-form').forEach(form => {
+  form.querySelector('[name="_page"]').value = location.pathname;
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    const msg = form.querySelector('.form-msg');
+    const btn = form.querySelector('button[type=submit]');
+    form.querySelector('[name="_t"]').value = String(Math.round((Date.now() - opened) / 1000));
+    btn.disabled = true;
+    msg.textContent = '送信しています…';
+    msg.className = 'form-msg';
+    try {
+      const r = await fetch('/api/forms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(form))) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.message || '送信できませんでした');
+      form.reset();
+      form.querySelector('[name="_page"]').value = location.pathname;
+      msg.textContent = j.message || '送信しました。ありがとうございました。';
+      msg.className = 'form-msg ok';
+    } catch (err) {
+      msg.textContent = err.message + '。時間をおいて、もう一度送ってください。';
+      msg.className = 'form-msg ng';
+    } finally { btn.disabled = false; }
+  });
+});
+
+/* メニュー：スマホでは開け閉めする。いま見ているページに印をつける */
+document.querySelectorAll('.site-menu').forEach(menu => {
+  const btn = menu.querySelector('.menu-btn');
+  btn.addEventListener('click', () => { const open = menu.classList.toggle('open'); btn.setAttribute('aria-expanded', String(open)); });
+  const here = location.pathname.replace(/\/$/, '') || '/';
+  menu.querySelectorAll('a[href^="/"]').forEach(a => { if ((a.getAttribute('href').replace(/\/$/, '') || '/') === here) a.setAttribute('aria-current', 'page'); });
+});
